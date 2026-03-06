@@ -15,5 +15,6 @@ ENV NODE_ENV=production
 COPY package.json ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/gemliste_knz.xls ./gemliste_knz.xls
 EXPOSE 3000
 CMD ["npm", "run", "start"]
