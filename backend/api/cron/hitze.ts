@@ -524,11 +524,6 @@ function municipalityDisplayName(municipalityId: string): string {
     return name;
   }
 
-  // GeoSphere IDs with a leading 9 map to Vienna.
-  if (municipalityId.startsWith("9")) {
-    return "Wien";
-  }
-
   return `Gemeinde ${municipalityId}`;
 }
 
