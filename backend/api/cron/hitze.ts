@@ -20,6 +20,7 @@ const GEO_FETCH_RETRIES = 2;
 let messagingClient: Messaging | null = null;
 let redisClient: RedisClientType | null = null;
 let municipalityNameById: Map<string, string> | null = null;
+let testMunicipalityOptions: TestMunicipalityOption[] | null = null;
 
 type WarningKind = "heat" | "cold";
 
@@ -436,22 +437,31 @@ function buildTimeWindowText(timeWindow: { start: string; end: string }): string
   return "";
 }
 
-function municipalityListPath(): string {
-  return path.resolve(process.cwd(), MUNICIPALITY_LIST_FILE);
+function municipalityListPaths(): string[] {
+  return [
+    path.resolve(process.cwd(), MUNICIPALITY_LIST_FILE),
+    path.resolve(__dirname, "..", MUNICIPALITY_LIST_FILE),
+    path.resolve(__dirname, "..", "..", MUNICIPALITY_LIST_FILE),
+    path.resolve(__dirname, "..", "..", "..", MUNICIPALITY_LIST_FILE),
+  ];
 }
 
-function loadMunicipalityNameMap(): Map<string, string> {
-  if (municipalityNameById) {
-    return municipalityNameById;
+function municipalityListPath(): string {
+  for (const candidate of municipalityListPaths()) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
   }
 
-  const map = new Map<string, string>();
+  return municipalityListPaths()[0];
+}
+
+function loadMunicipalityRows(): Array<{ municipalityId: string; name: string }> {
   const filePath = municipalityListPath();
 
   if (!existsSync(filePath)) {
     console.warn(`municipality_list_not_found: ${filePath}`);
-    municipalityNameById = map;
-    return map;
+    return [];
   }
 
   try {
@@ -463,25 +473,45 @@ function loadMunicipalityNameMap(): Map<string, string> {
       defval: "",
     }) as unknown[][];
 
-    for (const row of rows.slice(1)) {
-      const idCandidate = asString(row[0]) ?? (asNumber(row[0]) !== null ? String(asNumber(row[0])) : null);
-      const name = asString(row[1]);
-      if (!idCandidate || !name) {
-        continue;
-      }
+    return rows
+      .slice(1)
+      .map((row) => {
+        const idCandidate =
+          asString(row[0]) ?? (asNumber(row[0]) !== null ? String(asNumber(row[0])) : null);
+        const name = asString(row[1]);
 
-      const id = normalizeMunicipalityId(idCandidate);
-      if (!id) {
-        continue;
-      }
+        if (!idCandidate || !name) {
+          return null;
+        }
 
-      map.set(id, name);
-    }
+        const municipalityId = normalizeMunicipalityId(idCandidate);
+        if (!municipalityId) {
+          return null;
+        }
+
+        return {
+          municipalityId,
+          name,
+        };
+      })
+      .filter((row): row is { municipalityId: string; name: string } => row !== null);
   } catch (error) {
     console.warn("municipality_list_load_failed", {
       filePath,
       error: error instanceof Error ? error.message : String(error),
     });
+    return [];
+  }
+}
+
+function loadMunicipalityNameMap(): Map<string, string> {
+  if (municipalityNameById) {
+    return municipalityNameById;
+  }
+
+  const map = new Map<string, string>();
+  for (const row of loadMunicipalityRows()) {
+    map.set(row.municipalityId, row.name);
   }
 
   municipalityNameById = map;
@@ -875,18 +905,22 @@ export interface TestPushTokenInput {
 
 export interface TestMunicipalityOption {
   municipalityId: string;
-  districtCode: string;
   name: string;
 }
 
 export function listTestMunicipalityOptions(): TestMunicipalityOption[] {
-  return Array.from(loadMunicipalityNameMap().entries())
-    .map(([municipalityId, name]) => ({
-      municipalityId,
-      districtCode: municipalityId.slice(0, 3),
-      name,
+  if (testMunicipalityOptions) {
+    return testMunicipalityOptions;
+  }
+
+  testMunicipalityOptions = loadMunicipalityRows()
+    .map((row) => ({
+      municipalityId: row.municipalityId,
+      name: row.name,
     }))
     .sort((left, right) => left.municipalityId.localeCompare(right.municipalityId, "de-AT"));
+
+  return testMunicipalityOptions;
 }
 
 export async function sendTestPushNotification(input: TestPushInput): Promise<{ messageId: string; topic: string }> {

@@ -61,6 +61,7 @@ const GEO_FETCH_RETRIES = 2;
 let messagingClient = null;
 let redisClient = null;
 let municipalityNameById = null;
+let testMunicipalityOptions = null;
 class AppError extends Error {
     status;
     code;
@@ -353,19 +354,27 @@ function buildTimeWindowText(timeWindow) {
     }
     return "";
 }
-function municipalityListPath() {
-    return node_path_1.default.resolve(process.cwd(), MUNICIPALITY_LIST_FILE);
+function municipalityListPaths() {
+    return [
+        node_path_1.default.resolve(process.cwd(), MUNICIPALITY_LIST_FILE),
+        node_path_1.default.resolve(__dirname, "..", MUNICIPALITY_LIST_FILE),
+        node_path_1.default.resolve(__dirname, "..", "..", MUNICIPALITY_LIST_FILE),
+        node_path_1.default.resolve(__dirname, "..", "..", "..", MUNICIPALITY_LIST_FILE),
+    ];
 }
-function loadMunicipalityNameMap() {
-    if (municipalityNameById) {
-        return municipalityNameById;
+function municipalityListPath() {
+    for (const candidate of municipalityListPaths()) {
+        if ((0, node_fs_1.existsSync)(candidate)) {
+            return candidate;
+        }
     }
-    const map = new Map();
+    return municipalityListPaths()[0];
+}
+function loadMunicipalityRows() {
     const filePath = municipalityListPath();
     if (!(0, node_fs_1.existsSync)(filePath)) {
         console.warn(`municipality_list_not_found: ${filePath}`);
-        municipalityNameById = map;
-        return map;
+        return [];
     }
     try {
         const workbook = XLSX.readFile(filePath);
@@ -375,24 +384,40 @@ function loadMunicipalityNameMap() {
             raw: false,
             defval: "",
         });
-        for (const row of rows.slice(1)) {
+        return rows
+            .slice(1)
+            .map((row) => {
             const idCandidate = asString(row[0]) ?? (asNumber(row[0]) !== null ? String(asNumber(row[0])) : null);
             const name = asString(row[1]);
             if (!idCandidate || !name) {
-                continue;
+                return null;
             }
-            const id = normalizeMunicipalityId(idCandidate);
-            if (!id) {
-                continue;
+            const municipalityId = normalizeMunicipalityId(idCandidate);
+            if (!municipalityId) {
+                return null;
             }
-            map.set(id, name);
-        }
+            return {
+                municipalityId,
+                name,
+            };
+        })
+            .filter((row) => row !== null);
     }
     catch (error) {
         console.warn("municipality_list_load_failed", {
             filePath,
             error: error instanceof Error ? error.message : String(error),
         });
+        return [];
+    }
+}
+function loadMunicipalityNameMap() {
+    if (municipalityNameById) {
+        return municipalityNameById;
+    }
+    const map = new Map();
+    for (const row of loadMunicipalityRows()) {
+        map.set(row.municipalityId, row.name);
     }
     municipalityNameById = map;
     return map;
@@ -675,13 +700,16 @@ function pushContentForWarning(aggregate, timeWindow) {
     };
 }
 function listTestMunicipalityOptions() {
-    return Array.from(loadMunicipalityNameMap().entries())
-        .map(([municipalityId, name]) => ({
-        municipalityId,
-        districtCode: municipalityId.slice(0, 3),
-        name,
+    if (testMunicipalityOptions) {
+        return testMunicipalityOptions;
+    }
+    testMunicipalityOptions = loadMunicipalityRows()
+        .map((row) => ({
+        municipalityId: row.municipalityId,
+        name: row.name,
     }))
         .sort((left, right) => left.municipalityId.localeCompare(right.municipalityId, "de-AT"));
+    return testMunicipalityOptions;
 }
 async function sendTestPushNotification(input) {
     const municipalityId = input.municipalityId.trim();
