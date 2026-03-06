@@ -46,18 +46,10 @@ final class DashboardViewModel: ObservableObject {
         self.userDefaults = userDefaults
 
         if let data = userDefaults.data(forKey: storageKey),
-           let decoded = try? JSONDecoder().decode([Worksite].self, from: data),
-           !decoded.isEmpty {
+           let decoded = try? JSONDecoder().decode([Worksite].self, from: data) {
             self.worksites = decoded
         } else {
-            self.worksites = [
-                Worksite(
-                    name: "Arbeitsplatz Wien",
-                    address: "Stephansplatz, 1010 Wien, Oesterreich",
-                    latitude: 48.2082,
-                    longitude: 16.3738
-                )
-            ]
+            self.worksites = []
         }
 
         setupSubscribers()
@@ -248,31 +240,21 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private func formattedAddress(from mapItem: MKMapItem) -> String {
-        // Fallback to manual formatting if Contacts framework isn't available
-        let placemark = mapItem.placemark
-        var components: [String] = []
-        
-        if let street = placemark.thoroughfare {
-            var fullStreet = street
-            if let houseNumber = placemark.subThoroughfare {
-                fullStreet += " \(houseNumber)"
+        if let representations = mapItem.addressRepresentations {
+            let fullAddress = representations
+                .fullAddress(includingRegion: true, singleLine: true)?
+                .trimmed ?? ""
+            if !fullAddress.isEmpty {
+                return fullAddress
             }
-            components.append(fullStreet)
         }
-        
-        if let postalCode = placemark.postalCode, let city = placemark.locality {
-            components.append("\(postalCode) \(city)")
-        } else if let city = placemark.locality {
-            components.append(city)
+
+        if let fullAddress = mapItem.address?.fullAddress.trimmed, !fullAddress.isEmpty {
+            return fullAddress
         }
-        
-        if let country = placemark.country {
-            components.append(country)
-        }
-        
-        let addressString = components.joined(separator: ", ").trimmed
-        if !addressString.isEmpty {
-            return addressString
+
+        if let shortAddress = mapItem.address?.shortAddress?.trimmed, !shortAddress.isEmpty {
+            return shortAddress
         }
 
         if let fallbackName = mapItem.name?.trimmed, !fallbackName.isEmpty {

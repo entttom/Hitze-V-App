@@ -21,9 +21,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Messaging.messaging().apnsToken = deviceToken
+        FirebaseRegistrationManager.shared.notifyAPNsRegistrationSucceeded()
+        print("APNs registration successful, token forwarded to Firebase Messaging.")
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: any Error) {
+        FirebaseRegistrationManager.shared.notifyAPNsRegistrationFailed(error)
         print("APNs registration failed: \(error.localizedDescription)")
     }
 

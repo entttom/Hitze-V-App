@@ -1,20 +1,66 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.listTestMunicipalityOptions = listTestMunicipalityOptions;
 exports.sendTestPushNotification = sendTestPushNotification;
+exports.sendTestPushNotifications = sendTestPushNotifications;
 exports.sendTestPushToToken = sendTestPushToToken;
 exports.executeHitzeCron = executeHitzeCron;
 const node_crypto_1 = require("node:crypto");
+const node_fs_1 = require("node:fs");
+const node_path_1 = __importDefault(require("node:path"));
 const app_1 = require("firebase-admin/app");
 const messaging_1 = require("firebase-admin/messaging");
 const redis_1 = require("redis");
+const XLSX = __importStar(require("xlsx"));
 const GEOSPHERE_WARNSTATUS_URL = "https://warnungen.zamg.at/wsapp/api/getWarnstatus";
 const REDIS_SIGNATURE_KEY = "hitze:v1:signatures";
-const HITZE_TYPE_ID = 6;
+const REDIS_SEND_META_KEY = "hitze:v1:send_meta";
+const SEND_META_RETENTION_DAYS = 7;
+const WARNING_TYPE_HEAT = 6;
+const WARNING_TYPE_COLD = 7;
+const MUNICIPALITY_LIST_FILE = "gemliste_knz.xls";
 const DEFAULT_MIN_WARNING_LEVEL = 2;
 const GEO_FETCH_TIMEOUT_MS = 10_000;
 const GEO_FETCH_RETRIES = 2;
 let messagingClient = null;
 let redisClient = null;
+let municipalityNameById = null;
 class AppError extends Error {
     status;
     code;
@@ -51,6 +97,9 @@ function asNumber(value) {
     }
     return null;
 }
+function normalizeMunicipalityId(value) {
+    return value.replace(/\s+/g, "");
+}
 function getWarningLevel(properties) {
     const directLevel = asNumber(properties.wlevel) ??
         asNumber(properties.warning_level) ??
@@ -70,26 +119,85 @@ function getWarningLevel(properties) {
         asNumber(rawInfo.warning_level) ??
         asNumber(rawInfo.warnstufeid));
 }
-function isHeatWarning(properties) {
-    const directType = properties.wtype ??
-        properties.warn_type ??
-        properties.warning_type ??
-        properties.warntypid;
-    const numericType = asNumber(directType);
-    if (numericType === HITZE_TYPE_ID) {
-        return true;
-    }
-    const textualType = asString(directType)?.toLowerCase();
-    if (textualType && (textualType.includes("hitze") || textualType.includes("heat"))) {
-        return true;
-    }
-    const rawInfo = isRecord(properties.rawinfo)
+function getRawInfo(properties) {
+    return isRecord(properties.rawinfo)
         ? properties.rawinfo
         : isRecord(properties.rawfinfo)
             ? properties.rawfinfo
             : null;
-    const nestedNumericType = rawInfo ? asNumber(rawInfo.wtype) : null;
-    return nestedNumericType === HITZE_TYPE_ID;
+}
+function parseTimestampToEpochMs(value) {
+    const numeric = asNumber(value);
+    if (numeric !== null) {
+        // GeoSphere unix values are usually seconds; larger values are assumed to be milliseconds.
+        return numeric > 100_000_000_000 ? Math.trunc(numeric) : Math.trunc(numeric * 1000);
+    }
+    const str = asString(value);
+    if (!str) {
+        return null;
+    }
+    if (/^\d+(\.\d+)?$/.test(str)) {
+        const asNumeric = Number(str);
+        if (Number.isFinite(asNumeric)) {
+            return asNumeric > 100_000_000_000 ? Math.trunc(asNumeric) : Math.trunc(asNumeric * 1000);
+        }
+        return null;
+    }
+    const parsed = Date.parse(str);
+    return Number.isNaN(parsed) ? null : parsed;
+}
+function toIsoUtc(epochMs) {
+    if (epochMs === null) {
+        return "";
+    }
+    return new Date(epochMs).toISOString();
+}
+function getWarningTimeWindow(properties) {
+    const rawInfo = getRawInfo(properties);
+    const startMs = parseTimestampToEpochMs(properties.begin) ??
+        parseTimestampToEpochMs(properties.start) ??
+        parseTimestampToEpochMs(rawInfo?.begin) ??
+        parseTimestampToEpochMs(rawInfo?.start);
+    const endMs = parseTimestampToEpochMs(properties.end) ??
+        parseTimestampToEpochMs(rawInfo?.end);
+    return {
+        start: toIsoUtc(startMs),
+        end: toIsoUtc(endMs),
+        endMs,
+    };
+}
+function mapWarningTypeToKind(value) {
+    const numericType = asNumber(value);
+    if (numericType === WARNING_TYPE_HEAT) {
+        return "heat";
+    }
+    if (numericType === WARNING_TYPE_COLD) {
+        return "cold";
+    }
+    return null;
+}
+function getWarningKind(properties) {
+    const directType = properties.wtype ??
+        properties.warn_type ??
+        properties.warning_type ??
+        properties.warntypid;
+    const directKind = mapWarningTypeToKind(directType);
+    if (directKind) {
+        return directKind;
+    }
+    const textualType = asString(directType)?.toLowerCase();
+    if (textualType && (textualType.includes("hitze") || textualType.includes("heat"))) {
+        return "heat";
+    }
+    if (textualType && (textualType.includes("kälte") || textualType.includes("kaelte") || textualType.includes("cold"))) {
+        return "cold";
+    }
+    const rawInfo = getRawInfo(properties);
+    if (!rawInfo) {
+        return null;
+    }
+    const nestedType = rawInfo.wtype ?? rawInfo.warn_type ?? rawInfo.warning_type ?? rawInfo.warntypid;
+    return mapWarningTypeToKind(nestedType);
 }
 function getMunicipalityIds(properties) {
     const value = properties.gemeinden ?? properties.municipalities;
@@ -103,7 +211,7 @@ function getMunicipalityIds(properties) {
         if (!parsed) {
             continue;
         }
-        const normalized = parsed.replace(/\s+/g, "");
+        const normalized = normalizeMunicipalityId(parsed);
         if (normalized.length > 0) {
             ids.add(normalized);
         }
@@ -132,7 +240,12 @@ function normalizeWarning(rawFeature, index, minWarningLevel) {
     if (!properties) {
         return null;
     }
-    if (!isHeatWarning(properties)) {
+    const kind = getWarningKind(properties);
+    if (!kind) {
+        return null;
+    }
+    // Product decision: ignore cold warnings completely.
+    if (kind === "cold") {
         return null;
     }
     const level = getWarningLevel(properties);
@@ -143,10 +256,13 @@ function normalizeWarning(rawFeature, index, minWarningLevel) {
     if (municipalities.length === 0) {
         return null;
     }
-    const start = asString(properties.start) ?? "";
-    const end = asString(properties.end) ?? "";
+    const { start, end, endMs } = getWarningTimeWindow(properties);
+    if (endMs !== null && endMs <= Date.now()) {
+        return null;
+    }
     return {
         id: getWarningId(properties, `fallback-${index}`),
+        kind,
         level,
         municipalities,
         start,
@@ -157,16 +273,18 @@ function aggregateWarnings(warnings) {
     const aggregates = new Map();
     for (const warning of warnings) {
         for (const municipalityId of warning.municipalities) {
-            const existing = aggregates.get(municipalityId);
+            const aggregateKey = `${warning.kind}:${municipalityId}`;
+            const existing = aggregates.get(aggregateKey);
             if (!existing) {
                 const aggregate = {
                     municipalityId,
+                    kind: warning.kind,
                     maxLevel: warning.level,
                     warningIds: new Set([warning.id]),
                     starts: warning.start ? new Set([warning.start]) : new Set(),
                     ends: warning.end ? new Set([warning.end]) : new Set(),
                 };
-                aggregates.set(municipalityId, aggregate);
+                aggregates.set(aggregateKey, aggregate);
                 continue;
             }
             existing.maxLevel = Math.max(existing.maxLevel, warning.level);
@@ -187,12 +305,108 @@ function buildMunicipalitySignature(aggregate) {
     const ends = Array.from(aggregate.ends).sort();
     const payload = JSON.stringify({
         municipalityId: aggregate.municipalityId,
+        kind: aggregate.kind,
         maxLevel: aggregate.maxLevel,
         warningIds,
         starts,
         ends,
     });
     return (0, node_crypto_1.createHash)("sha256").update(payload).digest("hex");
+}
+function aggregateTimeWindow(aggregate) {
+    const starts = Array.from(aggregate.starts).filter((value) => value.length > 0).sort();
+    const ends = Array.from(aggregate.ends).filter((value) => value.length > 0).sort();
+    return {
+        start: starts[0] ?? "",
+        end: ends.length > 0 ? ends[ends.length - 1] : "",
+    };
+}
+function formatPushTime(isoValue) {
+    if (!isoValue) {
+        return "";
+    }
+    const parsed = Date.parse(isoValue);
+    if (Number.isNaN(parsed)) {
+        return "";
+    }
+    return new Intl.DateTimeFormat("de-AT", {
+        timeZone: "Europe/Vienna",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    }).format(new Date(parsed));
+}
+function buildTimeWindowText(timeWindow) {
+    const startText = formatPushTime(timeWindow.start);
+    const endText = formatPushTime(timeWindow.end);
+    if (startText && endText) {
+        return `Gueltig: ${startText} - ${endText}`;
+    }
+    if (startText) {
+        return `Ab: ${startText}`;
+    }
+    if (endText) {
+        return `Bis: ${endText}`;
+    }
+    return "";
+}
+function municipalityListPath() {
+    return node_path_1.default.resolve(process.cwd(), MUNICIPALITY_LIST_FILE);
+}
+function loadMunicipalityNameMap() {
+    if (municipalityNameById) {
+        return municipalityNameById;
+    }
+    const map = new Map();
+    const filePath = municipalityListPath();
+    if (!(0, node_fs_1.existsSync)(filePath)) {
+        console.warn(`municipality_list_not_found: ${filePath}`);
+        municipalityNameById = map;
+        return map;
+    }
+    try {
+        const workbook = XLSX.readFile(filePath);
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0] ?? ""];
+        const rows = XLSX.utils.sheet_to_json(firstSheet, {
+            header: 1,
+            raw: false,
+            defval: "",
+        });
+        for (const row of rows.slice(1)) {
+            const idCandidate = asString(row[0]) ?? (asNumber(row[0]) !== null ? String(asNumber(row[0])) : null);
+            const name = asString(row[1]);
+            if (!idCandidate || !name) {
+                continue;
+            }
+            const id = normalizeMunicipalityId(idCandidate);
+            if (!id) {
+                continue;
+            }
+            map.set(id, name);
+        }
+    }
+    catch (error) {
+        console.warn("municipality_list_load_failed", {
+            filePath,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+    municipalityNameById = map;
+    return map;
+}
+function municipalityDisplayName(municipalityId) {
+    const name = loadMunicipalityNameMap().get(municipalityId);
+    if (name) {
+        return name;
+    }
+    // GeoSphere IDs with a leading 9 map to Vienna.
+    if (municipalityId.startsWith("9")) {
+        return "Wien";
+    }
+    return `Gemeinde ${municipalityId}`;
 }
 function getMinWarningLevel() {
     const raw = process.env.HITZE_MIN_LEVEL;
@@ -328,12 +542,66 @@ class RedisStateClient {
             throw new RedisUnavailableError(`Redis HSET failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
+    async getSendMetadata() {
+        try {
+            const result = await this.client.hGetAll(REDIS_SEND_META_KEY);
+            if (!result) {
+                return {};
+            }
+            const parsed = {};
+            for (const [key, value] of Object.entries(result)) {
+                try {
+                    const decoded = JSON.parse(value);
+                    const dayKey = asString(decoded.dayKey);
+                    const start = asString(decoded.start) ?? "";
+                    const end = asString(decoded.end) ?? "";
+                    if (!dayKey) {
+                        continue;
+                    }
+                    parsed[key] = { dayKey, start, end };
+                }
+                catch {
+                    // Ignore malformed metadata entries and continue safely.
+                }
+            }
+            return parsed;
+        }
+        catch (error) {
+            throw new RedisUnavailableError(`Redis HGETALL failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    async setSendMetadata(entries) {
+        const serializedEntries = {};
+        for (const [key, value] of Object.entries(entries)) {
+            serializedEntries[key] = JSON.stringify(value);
+        }
+        if (Object.keys(serializedEntries).length === 0) {
+            return;
+        }
+        try {
+            await this.client.hSet(REDIS_SEND_META_KEY, serializedEntries);
+        }
+        catch (error) {
+            throw new RedisUnavailableError(`Redis HSET failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
     async removeSignatures(municipalityIds) {
         if (municipalityIds.length === 0) {
             return 0;
         }
         try {
             return await this.client.hDel(REDIS_SIGNATURE_KEY, municipalityIds);
+        }
+        catch (error) {
+            throw new RedisUnavailableError(`Redis HDEL failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    async removeSendMetadata(aggregateKeys) {
+        if (aggregateKeys.length === 0) {
+            return 0;
+        }
+        try {
+            return await this.client.hDel(REDIS_SEND_META_KEY, aggregateKeys);
         }
         catch (error) {
             throw new RedisUnavailableError(`Redis HDEL failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -366,6 +634,55 @@ async function getRedisClient() {
 function topicForMunicipality(municipalityId) {
     return `warngebiet_${municipalityId}`;
 }
+function aggregateStateKey(aggregate) {
+    return `${aggregate.kind}:${aggregate.municipalityId}`;
+}
+function currentDayKeyVienna(epochMs = Date.now()) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Europe/Vienna",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(new Date(epochMs));
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+    if (!year || !month || !day) {
+        return new Date(epochMs).toISOString().slice(0, 10);
+    }
+    return `${year}-${month}-${day}`;
+}
+function dayKeyDaysAgoVienna(daysAgo) {
+    const millisPerDay = 24 * 60 * 60 * 1000;
+    return currentDayKeyVienna(Date.now() - daysAgo * millisPerDay);
+}
+function pushContentForWarning(aggregate, timeWindow) {
+    const name = municipalityDisplayName(aggregate.municipalityId);
+    const timeWindowText = buildTimeWindowText(timeWindow);
+    if (aggregate.kind === "cold") {
+        const bodyBase = `Achtung extreme Kälte in ${name}, Kälteschutz-Ausrüstung tragen.`;
+        return {
+            title: "Kälte-Warnung",
+            body: timeWindowText ? `${bodyBase} ${timeWindowText}` : bodyBase,
+            collapsePrefix: "kaelte",
+        };
+    }
+    const bodyBase = `In ${name} wurde Warnstufe ${aggregate.maxLevel} erreicht. Hitzeschutzmaßnahmen nach Hitze-V umsetzen.`;
+    return {
+        title: "Hitze-Warnung",
+        body: timeWindowText ? `${bodyBase} ${timeWindowText}` : bodyBase,
+        collapsePrefix: "hitze",
+    };
+}
+function listTestMunicipalityOptions() {
+    return Array.from(loadMunicipalityNameMap().entries())
+        .map(([municipalityId, name]) => ({
+        municipalityId,
+        districtCode: municipalityId.slice(0, 3),
+        name,
+    }))
+        .sort((left, right) => left.municipalityId.localeCompare(right.municipalityId, "de-AT"));
+}
 async function sendTestPushNotification(input) {
     const municipalityId = input.municipalityId.trim();
     if (!municipalityId) {
@@ -376,7 +693,7 @@ async function sendTestPushNotification(input) {
     const messageId = await messaging.send({
         topic,
         notification: {
-            title: input.title?.trim() || "🧪 Test: Hitze-Warnung",
+            title: input.title?.trim() || "Test: Hitze-Warnung",
             body: input.body?.trim() ||
                 "Dies ist eine manuelle Testnachricht vom Backend.",
         },
@@ -399,6 +716,28 @@ async function sendTestPushNotification(input) {
     });
     return { messageId, topic };
 }
+async function sendTestPushNotifications(input) {
+    const municipalityIds = Array.from(new Set(input.municipalityIds
+        .map((municipalityId) => municipalityId.trim())
+        .filter((municipalityId) => municipalityId.length > 0)));
+    if (municipalityIds.length === 0) {
+        throw new AppError(400, "INVALID_INPUT", "At least one municipalityId is required.");
+    }
+    const sent = [];
+    for (const municipalityId of municipalityIds) {
+        const result = await sendTestPushNotification({
+            municipalityId,
+            title: input.title,
+            body: input.body,
+        });
+        sent.push({
+            municipalityId,
+            topic: result.topic,
+            messageId: result.messageId,
+        });
+    }
+    return { sent };
+}
 async function sendTestPushToToken(input) {
     const token = input.token.trim();
     if (!token) {
@@ -408,9 +747,8 @@ async function sendTestPushToToken(input) {
     const messageId = await messaging.send({
         token,
         notification: {
-            title: input.title?.trim() || "🧪 Test: Direkte FCM-Nachricht",
-            body: input.body?.trim() ||
-                "Dies ist eine manuelle Testnachricht direkt an ein einzelnes Geraet.",
+            title: input.title?.trim() || "Test: Hitze-Warnung (Token)",
+            body: input.body?.trim() || "Direkter Testversand an ein einzelnes Gerät.",
         },
         data: {
             source: "manual_test_token",
@@ -418,41 +756,52 @@ async function sendTestPushToToken(input) {
         },
         apns: {
             headers: {
-                "apns-collapse-id": "test-hitze-direct-token",
+                "apns-collapse-id": "test-hitze-token",
             },
             payload: {
                 aps: {
                     sound: "default",
-                    "thread-id": "test-hitze-direct-token",
+                    "thread-id": "test-hitze-token",
                 },
             },
         },
     });
-    return { messageId };
+    return { messageId, token };
 }
 async function sendMunicipalityWarning(messaging, aggregate) {
     const topic = topicForMunicipality(aggregate.municipalityId);
     const warningIds = Array.from(aggregate.warningIds).sort();
+    const timeWindow = aggregateTimeWindow(aggregate);
+    const content = pushContentForWarning(aggregate, timeWindow);
+    const collapseId = `${content.collapsePrefix}-${aggregate.municipalityId}`;
+    const warningStartLocal = formatPushTime(timeWindow.start);
+    const warningEndLocal = formatPushTime(timeWindow.end);
     await messaging.send({
         topic,
         notification: {
-            title: "⚠️ Hitze-Warnung",
-            body: `Warnstufe ${aggregate.maxLevel} erreicht. Hitzeschutzmaßnahmen nach Hitze-V umsetzen!`,
+            title: content.title,
+            body: content.body,
         },
         data: {
             gemeindenr: aggregate.municipalityId,
+            gemeindename: municipalityDisplayName(aggregate.municipalityId),
+            warningKind: aggregate.kind,
             warningLevel: String(aggregate.maxLevel),
             warningIds: warningIds.join(","),
+            warningStart: timeWindow.start,
+            warningEnd: timeWindow.end,
+            warningStartLocal,
+            warningEndLocal,
             source: "geosphere",
         },
         apns: {
             headers: {
-                "apns-collapse-id": `hitze-${aggregate.municipalityId}`,
+                "apns-collapse-id": collapseId,
             },
             payload: {
                 aps: {
                     sound: "default",
-                    "thread-id": `hitze-${aggregate.municipalityId}`,
+                    "thread-id": collapseId,
                 },
             },
         },
@@ -482,55 +831,102 @@ async function executeHitzeCron(method) {
         const minWarningLevel = getMinWarningLevel();
         const normalizedWarnings = await fetchGeoSphereWarnings(requestId, minWarningLevel);
         const aggregatesMap = aggregateWarnings(normalizedWarnings);
-        const aggregates = Array.from(aggregatesMap.values()).sort((a, b) => a.municipalityId.localeCompare(b.municipalityId));
+        const aggregates = Array.from(aggregatesMap.values()).sort((a, b) => aggregateStateKey(a).localeCompare(aggregateStateKey(b)));
         const currentSignatures = {};
         for (const aggregate of aggregates) {
-            currentSignatures[aggregate.municipalityId] = buildMunicipalitySignature(aggregate);
+            currentSignatures[aggregateStateKey(aggregate)] = buildMunicipalitySignature(aggregate);
         }
         // Fail-closed: without Redis state comparison no push is sent.
         const redis = await getRedisClient();
         const previousSignatures = await redis.getSignatures();
-        const previousMunicipalityIds = new Set(Object.keys(previousSignatures));
-        const currentMunicipalityIds = new Set(Object.keys(currentSignatures));
-        const changedMunicipalityIds = aggregates
-            .filter((aggregate) => previousSignatures[aggregate.municipalityId] !== currentSignatures[aggregate.municipalityId])
-            .map((aggregate) => aggregate.municipalityId);
-        const removedMunicipalityIds = Array.from(previousMunicipalityIds).filter((municipalityId) => !currentMunicipalityIds.has(municipalityId));
-        const changedAggregates = aggregates.filter((aggregate) => changedMunicipalityIds.includes(aggregate.municipalityId));
+        const previousSendMetadata = await redis.getSendMetadata();
+        const todayDayKey = currentDayKeyVienna();
+        const sendMetaCutoffDayKey = dayKeyDaysAgoVienna(SEND_META_RETENTION_DAYS);
+        const staleSendMetadataKeys = Object.entries(previousSendMetadata)
+            .filter(([, metadata]) => metadata.dayKey < sendMetaCutoffDayKey)
+            .map(([key]) => key);
+        if (staleSendMetadataKeys.length > 0) {
+            await redis.removeSendMetadata(staleSendMetadataKeys);
+            staleSendMetadataKeys.forEach((key) => {
+                delete previousSendMetadata[key];
+            });
+        }
+        const previousAggregateKeys = new Set(Object.keys(previousSignatures));
+        const currentAggregateKeys = new Set(Object.keys(currentSignatures));
+        const changedAggregateKeys = aggregates
+            .map((aggregate) => aggregateStateKey(aggregate))
+            .filter((key) => previousSignatures[key] !== currentSignatures[key]);
+        const removedAggregateKeys = Array.from(previousAggregateKeys).filter((key) => !currentAggregateKeys.has(key));
+        const changedAggregateKeySet = new Set(changedAggregateKeys);
+        const changedAggregates = aggregates.filter((aggregate) => changedAggregateKeySet.has(aggregateStateKey(aggregate)));
+        const sendCandidates = [];
+        const skippedRateLimitedKeys = new Set();
+        for (const aggregate of changedAggregates) {
+            const key = aggregateStateKey(aggregate);
+            const previousMetadata = previousSendMetadata[key];
+            const currentTimeWindow = aggregateTimeWindow(aggregate);
+            const currentStart = currentTimeWindow.start;
+            const currentEnd = currentTimeWindow.end;
+            const sentToday = previousMetadata?.dayKey === todayDayKey;
+            const beginChanged = (previousMetadata?.start ?? "") !== currentStart;
+            const endChanged = (previousMetadata?.end ?? "") !== currentEnd;
+            if (!sentToday || beginChanged || endChanged) {
+                sendCandidates.push(aggregate);
+                continue;
+            }
+            skippedRateLimitedKeys.add(key);
+        }
         const messaging = getFirebaseMessagingClient();
-        const sendResults = await Promise.allSettled(changedAggregates.map(async (aggregate) => {
+        const sendResults = await Promise.allSettled(sendCandidates.map(async (aggregate) => {
             await sendMunicipalityWarning(messaging, aggregate);
             return aggregate.municipalityId;
         }));
-        const successfulSignatures = {};
+        const signaturesToPersist = {};
+        const sendMetadataToPersist = {};
         const failedMunicipalities = [];
         sendResults.forEach((result, index) => {
-            const municipalityId = changedAggregates[index]?.municipalityId;
-            if (!municipalityId) {
+            const aggregate = sendCandidates[index];
+            const key = aggregate ? aggregateStateKey(aggregate) : null;
+            if (!aggregate || !key) {
                 return;
             }
             if (result.status === "fulfilled") {
-                successfulSignatures[municipalityId] = currentSignatures[municipalityId];
+                signaturesToPersist[key] = currentSignatures[key];
+                const timeWindow = aggregateTimeWindow(aggregate);
+                sendMetadataToPersist[key] = {
+                    dayKey: todayDayKey,
+                    start: timeWindow.start,
+                    end: timeWindow.end,
+                };
                 return;
             }
-            failedMunicipalities.push(municipalityId);
+            failedMunicipalities.push(`${aggregate.kind}:${aggregate.municipalityId}`);
             console.error(`[${requestId}] fcm_send_failed`, {
-                municipalityId,
+                municipalityId: aggregate.municipalityId,
+                warningKind: aggregate.kind,
                 error: result.reason instanceof Error
                     ? result.reason.message
                     : String(result.reason),
             });
         });
-        if (Object.keys(successfulSignatures).length > 0) {
-            await redis.setSignatures(successfulSignatures);
+        for (const key of skippedRateLimitedKeys) {
+            signaturesToPersist[key] = currentSignatures[key];
         }
-        const cleared = await redis.removeSignatures(removedMunicipalityIds);
+        if (Object.keys(signaturesToPersist).length > 0) {
+            await redis.setSignatures(signaturesToPersist);
+        }
+        if (Object.keys(sendMetadataToPersist).length > 0) {
+            await redis.setSendMetadata(sendMetadataToPersist);
+        }
+        const cleared = await redis.removeSignatures(removedAggregateKeys);
+        await redis.removeSendMetadata(removedAggregateKeys);
         const response = {
             requestId,
             processedWarnings: normalizedWarnings.length,
             affectedMunicipalities: aggregates.length,
-            sent: Object.keys(successfulSignatures).length,
-            skippedUnchanged: aggregates.length - changedMunicipalityIds.length,
+            sent: Object.keys(sendMetadataToPersist).length,
+            skippedUnchanged: aggregates.length - changedAggregateKeys.length,
+            skippedRateLimited: skippedRateLimitedKeys.size,
             cleared,
             failed: failedMunicipalities.length,
             failedMunicipalities,

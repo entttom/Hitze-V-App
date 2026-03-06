@@ -1,48 +1,47 @@
 import Foundation
 import CoreLocation
 
-enum HeatSeverity: Int {
+enum HazardSeverity: Int, Codable, Comparable {
     case none = 0
-    case yellow = 1
-    case orange = 2
-    case red = 3
+    
+    // Heat
+    case heatYellow = 11
+    case heatOrange = 12
+    case heatRed = 13
+    
+    // Cold
+    case coldYellow = 21
+    case coldOrange = 22
+    case coldRed = 23
 
-    var title: String {
+    var level: Int {
         switch self {
-        case .none:
-            return "Gruen"
-        case .yellow:
-            return "Gelb"
-        case .orange:
-            return "Orange"
-        case .red:
-            return "Rot"
+        case .none: return 0
+        case .heatYellow, .coldYellow: return 1
+        case .heatOrange, .coldOrange: return 2
+        case .heatRed, .coldRed: return 3
         }
     }
-
-    var accessibilityTitle: String {
-        switch self {
-        case .none:
-            return "Keine Hitzewarnung"
-        case .yellow:
-            return "Hitzewarnung gelb"
-        case .orange:
-            return "Hitzewarnung orange"
-        case .red:
-            return "Hitzewarnung rot"
-        }
+    
+    static func < (lhs: HazardSeverity, rhs: HazardSeverity) -> Bool {
+        return lhs.level < rhs.level
     }
 
-    static func from(level: Int) -> HeatSeverity {
+    static func heat(from level: Int) -> HazardSeverity {
         switch level {
-        case 3...:
-            return .red
-        case 2:
-            return .orange
-        case 1:
-            return .yellow
-        default:
-            return .none
+        case 3...: return .heatRed
+        case 2: return .heatOrange
+        case 1: return .heatYellow
+        default: return .none
+        }
+    }
+    
+    static func cold(from level: Int) -> HazardSeverity {
+        switch level {
+        case 3...: return .coldRed
+        case 2: return .coldOrange
+        case 1: return .coldYellow
+        default: return .none
         }
     }
 }
@@ -71,12 +70,21 @@ struct Worksite: Identifiable, Codable, Hashable {
     }
 }
 
+struct DailyForecast: Identifiable, Codable, Hashable {
+    var id = UUID()
+    let date: Date
+    let severity: HazardSeverity
+    let apparentTemperatureMax: Double?
+    let uvIndexMax: Double?
+}
+
 struct WorksiteSnapshot {
     let municipalityID: String
     let municipalityName: String
-    let severity: HeatSeverity
+    let severity: HazardSeverity
     let uvIndex: Double?
     let apparentTemperature: Double?
+    let forecasts: [DailyForecast]
     let updatedAt: Date
 }
 

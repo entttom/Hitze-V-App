@@ -15,7 +15,10 @@ Service listens on `PORT` (default `3000`).
 - `GET /health`
 - `GET /cron/hitze`
 - `POST /cron/hitze` (requires `Authorization: Bearer <CRON_SECRET>` when `CRON_SECRET` is set)
-- `POST /test/push` (manual test push; currently no extra auth)
+- `GET /test/push/ui` (Dev-only test UI for recipient selection from `gemliste_knz.xls`)
+- `POST /test/push` (Dev-only manual test push to one municipality)
+- `POST /test/push/bulk` (Dev-only manual test push to multiple municipalities)
+- `POST /test/push/token` (Dev-only manual test push to one device token)
 
 ### curl test push
 
@@ -38,6 +41,7 @@ Optional:
 
 - `HITZE_MIN_LEVEL` (default `2`)
 - `CRON_SECRET`
+- `develop` or `DEVELOP` (`true`/`1`/`yes`/`on` enables the test routes and test website)
 - `PORT`
 
 ## Coolify setup

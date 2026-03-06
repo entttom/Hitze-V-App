@@ -102,10 +102,12 @@ final class SubscriptionManager: ObservableObject {
         let toSubscribe = desiredMunicipalityIDs.subtracting(workingSet)
         let toUnsubscribe = allowUnsubscribe ? workingSet.subtracting(desiredMunicipalityIDs) : Set<String>()
 
-        if !toSubscribe.isEmpty {
+        if !toSubscribe.isEmpty || !toUnsubscribe.isEmpty {
             do {
                 try await FirebaseRegistrationManager.shared.registerForPushNotificationsIfNeeded()
+                print("Firebase registration successful.")
             } catch {
+                print("Firebase registration failed: \(error.localizedDescription)")
                 errors.append(.firebaseRegistration(message: error.localizedDescription))
                 return errors
             }
@@ -115,6 +117,7 @@ final class SubscriptionManager: ObservableObject {
             do {
                 try await subscribe(toMunicipalityID: municipalityID)
                 workingSet.insert(municipalityID)
+                print("Subscribed municipalityId: \(municipalityID)")
             } catch let error as SubscriptionError {
                 errors.append(error)
             } catch {
@@ -126,6 +129,7 @@ final class SubscriptionManager: ObservableObject {
             do {
                 try await unsubscribe(fromMunicipalityID: municipalityID)
                 workingSet.remove(municipalityID)
+                print("Unsubscribed municipalityId: \(municipalityID)")
             } catch let error as SubscriptionError {
                 errors.append(error)
             } catch {
@@ -139,7 +143,9 @@ final class SubscriptionManager: ObservableObject {
         if workingSet.isEmpty {
             do {
                 try await FirebaseRegistrationManager.shared.deregisterFromFirebase()
+                print("Firebase deregistration successful.")
             } catch {
+                print("Firebase deregistration failed: \(error.localizedDescription)")
                 // Ignore deregistration cleanup failures to avoid noisy UI errors.
             }
         }

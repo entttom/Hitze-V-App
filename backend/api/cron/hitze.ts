@@ -1,20 +1,31 @@
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getMessaging, type Messaging } from "firebase-admin/messaging";
 import { createClient, type RedisClientType } from "redis";
+import * as XLSX from "xlsx";
 
 const GEOSPHERE_WARNSTATUS_URL = "https://warnungen.zamg.at/wsapp/api/getWarnstatus";
 const REDIS_SIGNATURE_KEY = "hitze:v1:signatures";
-const HITZE_TYPE_ID = 6;
+const REDIS_SEND_META_KEY = "hitze:v1:send_meta";
+const SEND_META_RETENTION_DAYS = 7;
+const WARNING_TYPE_HEAT = 6;
+const WARNING_TYPE_COLD = 7;
+const MUNICIPALITY_LIST_FILE = "gemliste_knz.xls";
 const DEFAULT_MIN_WARNING_LEVEL = 2;
 const GEO_FETCH_TIMEOUT_MS = 10_000;
 const GEO_FETCH_RETRIES = 2;
 
 let messagingClient: Messaging | null = null;
 let redisClient: RedisClientType | null = null;
+let municipalityNameById: Map<string, string> | null = null;
+
+type WarningKind = "heat" | "cold";
 
 interface NormalizedWarning {
   id: string;
+  kind: WarningKind;
   level: number;
   municipalities: string[];
   start: string;
@@ -23,6 +34,7 @@ interface NormalizedWarning {
 
 interface MunicipalityAggregate {
   municipalityId: string;
+  kind: WarningKind;
   maxLevel: number;
   warningIds: Set<string>;
   starts: Set<string>;
@@ -35,10 +47,17 @@ interface HandlerSuccessResponse {
   affectedMunicipalities: number;
   sent: number;
   skippedUnchanged: number;
+  skippedRateLimited: number;
   cleared: number;
   failed: number;
   durationMs: number;
   failedMunicipalities: string[];
+}
+
+interface AggregateSendMetadata {
+  dayKey: string;
+  start: string;
+  end: string;
 }
 
 class AppError extends Error {
@@ -85,6 +104,10 @@ function asNumber(value: unknown): number | null {
   return null;
 }
 
+function normalizeMunicipalityId(value: string): string {
+  return value.replace(/\s+/g, "");
+}
+
 function getWarningLevel(properties: Record<string, unknown>): number | null {
   const directLevel =
     asNumber(properties.wlevel) ??
@@ -112,31 +135,108 @@ function getWarningLevel(properties: Record<string, unknown>): number | null {
   );
 }
 
-function isHeatWarning(properties: Record<string, unknown>): boolean {
+function getRawInfo(properties: Record<string, unknown>): Record<string, unknown> | null {
+  return isRecord(properties.rawinfo)
+    ? properties.rawinfo
+    : isRecord(properties.rawfinfo)
+      ? properties.rawfinfo
+      : null;
+}
+
+function parseTimestampToEpochMs(value: unknown): number | null {
+  const numeric = asNumber(value);
+  if (numeric !== null) {
+    // GeoSphere unix values are usually seconds; larger values are assumed to be milliseconds.
+    return numeric > 100_000_000_000 ? Math.trunc(numeric) : Math.trunc(numeric * 1000);
+  }
+
+  const str = asString(value);
+  if (!str) {
+    return null;
+  }
+
+  if (/^\d+(\.\d+)?$/.test(str)) {
+    const asNumeric = Number(str);
+    if (Number.isFinite(asNumeric)) {
+      return asNumeric > 100_000_000_000 ? Math.trunc(asNumeric) : Math.trunc(asNumeric * 1000);
+    }
+    return null;
+  }
+
+  const parsed = Date.parse(str);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function toIsoUtc(epochMs: number | null): string {
+  if (epochMs === null) {
+    return "";
+  }
+
+  return new Date(epochMs).toISOString();
+}
+
+function getWarningTimeWindow(properties: Record<string, unknown>): { start: string; end: string; endMs: number | null } {
+  const rawInfo = getRawInfo(properties);
+
+  const startMs =
+    parseTimestampToEpochMs(properties.begin) ??
+    parseTimestampToEpochMs(properties.start) ??
+    parseTimestampToEpochMs(rawInfo?.begin) ??
+    parseTimestampToEpochMs(rawInfo?.start);
+
+  const endMs =
+    parseTimestampToEpochMs(properties.end) ??
+    parseTimestampToEpochMs(rawInfo?.end);
+
+  return {
+    start: toIsoUtc(startMs),
+    end: toIsoUtc(endMs),
+    endMs,
+  };
+}
+
+function mapWarningTypeToKind(value: unknown): WarningKind | null {
+  const numericType = asNumber(value);
+  if (numericType === WARNING_TYPE_HEAT) {
+    return "heat";
+  }
+
+  if (numericType === WARNING_TYPE_COLD) {
+    return "cold";
+  }
+
+  return null;
+}
+
+function getWarningKind(properties: Record<string, unknown>): WarningKind | null {
   const directType =
     properties.wtype ??
     properties.warn_type ??
     properties.warning_type ??
     properties.warntypid;
 
-  const numericType = asNumber(directType);
-  if (numericType === HITZE_TYPE_ID) {
-    return true;
+  const directKind = mapWarningTypeToKind(directType);
+  if (directKind) {
+    return directKind;
   }
 
   const textualType = asString(directType)?.toLowerCase();
   if (textualType && (textualType.includes("hitze") || textualType.includes("heat"))) {
-    return true;
+    return "heat";
   }
 
-  const rawInfo = isRecord(properties.rawinfo)
-    ? properties.rawinfo
-    : isRecord(properties.rawfinfo)
-      ? properties.rawfinfo
-      : null;
+  if (textualType && (textualType.includes("kälte") || textualType.includes("kaelte") || textualType.includes("cold"))) {
+    return "cold";
+  }
 
-  const nestedNumericType = rawInfo ? asNumber(rawInfo.wtype) : null;
-  return nestedNumericType === HITZE_TYPE_ID;
+  const rawInfo = getRawInfo(properties);
+
+  if (!rawInfo) {
+    return null;
+  }
+
+  const nestedType = rawInfo.wtype ?? rawInfo.warn_type ?? rawInfo.warning_type ?? rawInfo.warntypid;
+  return mapWarningTypeToKind(nestedType);
 }
 
 function getMunicipalityIds(properties: Record<string, unknown>): string[] {
@@ -156,7 +256,7 @@ function getMunicipalityIds(properties: Record<string, unknown>): string[] {
       continue;
     }
 
-    const normalized = parsed.replace(/\s+/g, "");
+    const normalized = normalizeMunicipalityId(parsed);
     if (normalized.length > 0) {
       ids.add(normalized);
     }
@@ -197,7 +297,13 @@ function normalizeWarning(
     return null;
   }
 
-  if (!isHeatWarning(properties)) {
+  const kind = getWarningKind(properties);
+  if (!kind) {
+    return null;
+  }
+
+  // Product decision: ignore cold warnings completely.
+  if (kind === "cold") {
     return null;
   }
 
@@ -211,11 +317,14 @@ function normalizeWarning(
     return null;
   }
 
-  const start = asString(properties.start) ?? "";
-  const end = asString(properties.end) ?? "";
+  const { start, end, endMs } = getWarningTimeWindow(properties);
+  if (endMs !== null && endMs <= Date.now()) {
+    return null;
+  }
 
   return {
     id: getWarningId(properties, `fallback-${index}`),
+    kind,
     level,
     municipalities,
     start,
@@ -228,17 +337,19 @@ function aggregateWarnings(warnings: NormalizedWarning[]): Map<string, Municipal
 
   for (const warning of warnings) {
     for (const municipalityId of warning.municipalities) {
-      const existing = aggregates.get(municipalityId);
+      const aggregateKey = `${warning.kind}:${municipalityId}`;
+      const existing = aggregates.get(aggregateKey);
 
       if (!existing) {
         const aggregate: MunicipalityAggregate = {
           municipalityId,
+          kind: warning.kind,
           maxLevel: warning.level,
           warningIds: new Set([warning.id]),
           starts: warning.start ? new Set([warning.start]) : new Set(),
           ends: warning.end ? new Set([warning.end]) : new Set(),
         };
-        aggregates.set(municipalityId, aggregate);
+        aggregates.set(aggregateKey, aggregate);
         continue;
       }
 
@@ -265,6 +376,7 @@ function buildMunicipalitySignature(aggregate: MunicipalityAggregate): string {
 
   const payload = JSON.stringify({
     municipalityId: aggregate.municipalityId,
+    kind: aggregate.kind,
     maxLevel: aggregate.maxLevel,
     warningIds,
     starts,
@@ -272,6 +384,122 @@ function buildMunicipalitySignature(aggregate: MunicipalityAggregate): string {
   });
 
   return createHash("sha256").update(payload).digest("hex");
+}
+
+function aggregateTimeWindow(aggregate: MunicipalityAggregate): { start: string; end: string } {
+  const starts = Array.from(aggregate.starts).filter((value) => value.length > 0).sort();
+  const ends = Array.from(aggregate.ends).filter((value) => value.length > 0).sort();
+
+  return {
+    start: starts[0] ?? "",
+    end: ends.length > 0 ? ends[ends.length - 1] : "",
+  };
+}
+
+function formatPushTime(isoValue: string): string {
+  if (!isoValue) {
+    return "";
+  }
+
+  const parsed = Date.parse(isoValue);
+  if (Number.isNaN(parsed)) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat("de-AT", {
+    timeZone: "Europe/Vienna",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(parsed));
+}
+
+function buildTimeWindowText(timeWindow: { start: string; end: string }): string {
+  const startText = formatPushTime(timeWindow.start);
+  const endText = formatPushTime(timeWindow.end);
+
+  if (startText && endText) {
+    return `Gueltig: ${startText} - ${endText}`;
+  }
+
+  if (startText) {
+    return `Ab: ${startText}`;
+  }
+
+  if (endText) {
+    return `Bis: ${endText}`;
+  }
+
+  return "";
+}
+
+function municipalityListPath(): string {
+  return path.resolve(process.cwd(), MUNICIPALITY_LIST_FILE);
+}
+
+function loadMunicipalityNameMap(): Map<string, string> {
+  if (municipalityNameById) {
+    return municipalityNameById;
+  }
+
+  const map = new Map<string, string>();
+  const filePath = municipalityListPath();
+
+  if (!existsSync(filePath)) {
+    console.warn(`municipality_list_not_found: ${filePath}`);
+    municipalityNameById = map;
+    return map;
+  }
+
+  try {
+    const workbook = XLSX.readFile(filePath);
+    const firstSheet = workbook.Sheets[workbook.SheetNames[0] ?? ""];
+    const rows = XLSX.utils.sheet_to_json(firstSheet, {
+      header: 1,
+      raw: false,
+      defval: "",
+    }) as unknown[][];
+
+    for (const row of rows.slice(1)) {
+      const idCandidate = asString(row[0]) ?? (asNumber(row[0]) !== null ? String(asNumber(row[0])) : null);
+      const name = asString(row[1]);
+      if (!idCandidate || !name) {
+        continue;
+      }
+
+      const id = normalizeMunicipalityId(idCandidate);
+      if (!id) {
+        continue;
+      }
+
+      map.set(id, name);
+    }
+  } catch (error) {
+    console.warn("municipality_list_load_failed", {
+      filePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  municipalityNameById = map;
+  return map;
+}
+
+function municipalityDisplayName(municipalityId: string): string {
+  const name = loadMunicipalityNameMap().get(municipalityId);
+  if (name) {
+    return name;
+  }
+
+  // GeoSphere IDs with a leading 9 map to Vienna.
+  if (municipalityId.startsWith("9")) {
+    return "Wien";
+  }
+
+  return `Gemeinde ${municipalityId}`;
 }
 
 function getMinWarningLevel(): number {
@@ -458,6 +686,57 @@ class RedisStateClient {
     }
   }
 
+  async getSendMetadata(): Promise<Record<string, AggregateSendMetadata>> {
+    try {
+      const result = await this.client.hGetAll(REDIS_SEND_META_KEY);
+      if (!result) {
+        return {};
+      }
+
+      const parsed: Record<string, AggregateSendMetadata> = {};
+      for (const [key, value] of Object.entries(result)) {
+        try {
+          const decoded = JSON.parse(value) as { dayKey?: unknown; start?: unknown };
+          const dayKey = asString(decoded.dayKey);
+          const start = asString(decoded.start) ?? "";
+          const end = asString((decoded as { end?: unknown }).end) ?? "";
+          if (!dayKey) {
+            continue;
+          }
+
+          parsed[key] = { dayKey, start, end };
+        } catch {
+          // Ignore malformed metadata entries and continue safely.
+        }
+      }
+
+      return parsed;
+    } catch (error) {
+      throw new RedisUnavailableError(
+        `Redis HGETALL failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  async setSendMetadata(entries: Record<string, AggregateSendMetadata>): Promise<void> {
+    const serializedEntries: Record<string, string> = {};
+    for (const [key, value] of Object.entries(entries)) {
+      serializedEntries[key] = JSON.stringify(value);
+    }
+
+    if (Object.keys(serializedEntries).length === 0) {
+      return;
+    }
+
+    try {
+      await this.client.hSet(REDIS_SEND_META_KEY, serializedEntries);
+    } catch (error) {
+      throw new RedisUnavailableError(
+        `Redis HSET failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
   async removeSignatures(municipalityIds: string[]): Promise<number> {
     if (municipalityIds.length === 0) {
       return 0;
@@ -465,6 +744,20 @@ class RedisStateClient {
 
     try {
       return await this.client.hDel(REDIS_SIGNATURE_KEY, municipalityIds);
+    } catch (error) {
+      throw new RedisUnavailableError(
+        `Redis HDEL failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  async removeSendMetadata(aggregateKeys: string[]): Promise<number> {
+    if (aggregateKeys.length === 0) {
+      return 0;
+    }
+
+    try {
+      return await this.client.hDel(REDIS_SEND_META_KEY, aggregateKeys);
     } catch (error) {
       throw new RedisUnavailableError(
         `Redis HDEL failed: ${error instanceof Error ? error.message : String(error)}`
@@ -510,10 +803,90 @@ function topicForMunicipality(municipalityId: string): string {
   return `warngebiet_${municipalityId}`;
 }
 
+function aggregateStateKey(aggregate: MunicipalityAggregate): string {
+  return `${aggregate.kind}:${aggregate.municipalityId}`;
+}
+
+function currentDayKeyVienna(epochMs: number = Date.now()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Vienna",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(epochMs));
+
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    return new Date(epochMs).toISOString().slice(0, 10);
+  }
+
+  return `${year}-${month}-${day}`;
+}
+
+function dayKeyDaysAgoVienna(daysAgo: number): string {
+  const millisPerDay = 24 * 60 * 60 * 1000;
+  return currentDayKeyVienna(Date.now() - daysAgo * millisPerDay);
+}
+
+function pushContentForWarning(
+  aggregate: MunicipalityAggregate,
+  timeWindow: { start: string; end: string }
+): { title: string; body: string; collapsePrefix: string } {
+  const name = municipalityDisplayName(aggregate.municipalityId);
+  const timeWindowText = buildTimeWindowText(timeWindow);
+
+  if (aggregate.kind === "cold") {
+    const bodyBase = `Achtung extreme Kälte in ${name}, Kälteschutz-Ausrüstung tragen.`;
+    return {
+      title: "Kälte-Warnung",
+      body: timeWindowText ? `${bodyBase} ${timeWindowText}` : bodyBase,
+      collapsePrefix: "kaelte",
+    };
+  }
+
+  const bodyBase = `In ${name} wurde Warnstufe ${aggregate.maxLevel} erreicht. Hitzeschutzmaßnahmen nach Hitze-V umsetzen.`;
+  return {
+    title: "Hitze-Warnung",
+    body: timeWindowText ? `${bodyBase} ${timeWindowText}` : bodyBase,
+    collapsePrefix: "hitze",
+  };
+}
+
 export interface TestPushInput {
   municipalityId: string;
   title?: string;
   body?: string;
+}
+
+export interface TestBulkPushInput {
+  municipalityIds: string[];
+  title?: string;
+  body?: string;
+}
+
+export interface TestPushTokenInput {
+  token: string;
+  title?: string;
+  body?: string;
+}
+
+export interface TestMunicipalityOption {
+  municipalityId: string;
+  districtCode: string;
+  name: string;
+}
+
+export function listTestMunicipalityOptions(): TestMunicipalityOption[] {
+  return Array.from(loadMunicipalityNameMap().entries())
+    .map(([municipalityId, name]) => ({
+      municipalityId,
+      districtCode: municipalityId.slice(0, 3),
+      name,
+    }))
+    .sort((left, right) => left.municipalityId.localeCompare(right.municipalityId, "de-AT"));
 }
 
 export async function sendTestPushNotification(input: TestPushInput): Promise<{ messageId: string; topic: string }> {
@@ -528,7 +901,7 @@ export async function sendTestPushNotification(input: TestPushInput): Promise<{ 
   const messageId = await messaging.send({
     topic,
     notification: {
-      title: input.title?.trim() || "🧪 Test: Hitze-Warnung",
+      title: input.title?.trim() || "Test: Hitze-Warnung",
       body:
         input.body?.trim() ||
         "Dies ist eine manuelle Testnachricht vom Backend.",
@@ -554,33 +927,114 @@ export async function sendTestPushNotification(input: TestPushInput): Promise<{ 
   return { messageId, topic };
 }
 
+export async function sendTestPushNotifications(
+  input: TestBulkPushInput
+): Promise<{ sent: Array<{ municipalityId: string; topic: string; messageId: string }> }> {
+  const municipalityIds = Array.from(
+    new Set(
+      input.municipalityIds
+        .map((municipalityId) => municipalityId.trim())
+        .filter((municipalityId) => municipalityId.length > 0)
+    )
+  );
+
+  if (municipalityIds.length === 0) {
+    throw new AppError(400, "INVALID_INPUT", "At least one municipalityId is required.");
+  }
+
+  const sent: Array<{ municipalityId: string; topic: string; messageId: string }> = [];
+
+  for (const municipalityId of municipalityIds) {
+    const result = await sendTestPushNotification({
+      municipalityId,
+      title: input.title,
+      body: input.body,
+    });
+
+    sent.push({
+      municipalityId,
+      topic: result.topic,
+      messageId: result.messageId,
+    });
+  }
+
+  return { sent };
+}
+
+export async function sendTestPushToToken(
+  input: TestPushTokenInput
+): Promise<{ messageId: string; token: string }> {
+  const token = input.token.trim();
+  if (!token) {
+    throw new AppError(400, "INVALID_INPUT", "token is required.");
+  }
+
+  const messaging = getFirebaseMessagingClient();
+
+  const messageId = await messaging.send({
+    token,
+    notification: {
+      title: input.title?.trim() || "Test: Hitze-Warnung (Token)",
+      body: input.body?.trim() || "Direkter Testversand an ein einzelnes Gerät.",
+    },
+    data: {
+      source: "manual_test_token",
+      warningLevel: "test",
+    },
+    apns: {
+      headers: {
+        "apns-collapse-id": "test-hitze-token",
+      },
+      payload: {
+        aps: {
+          sound: "default",
+          "thread-id": "test-hitze-token",
+        },
+      },
+    },
+  });
+
+  return { messageId, token };
+}
+
 async function sendMunicipalityWarning(
   messaging: Messaging,
   aggregate: MunicipalityAggregate
 ): Promise<void> {
   const topic = topicForMunicipality(aggregate.municipalityId);
   const warningIds = Array.from(aggregate.warningIds).sort();
+  const timeWindow = aggregateTimeWindow(aggregate);
+  const content = pushContentForWarning(aggregate, timeWindow);
+  const collapseId = `${content.collapsePrefix}-${aggregate.municipalityId}`;
+  const warningStartLocal = formatPushTime(timeWindow.start);
+  const warningEndLocal = formatPushTime(timeWindow.end);
 
   await messaging.send({
     topic,
     notification: {
-      title: "⚠️ Hitze-Warnung",
-      body: `Warnstufe ${aggregate.maxLevel} erreicht. Hitzeschutzmaßnahmen nach Hitze-V umsetzen!`,
+      title: content.title,
+      body: content.body,
     },
     data: {
       gemeindenr: aggregate.municipalityId,
+      gemeindename: municipalityDisplayName(aggregate.municipalityId),
+      warningKind: aggregate.kind,
       warningLevel: String(aggregate.maxLevel),
       warningIds: warningIds.join(","),
+      warningStart: timeWindow.start,
+      warningEnd: timeWindow.end,
+      warningStartLocal,
+      warningEndLocal,
       source: "geosphere",
     },
     apns: {
       headers: {
-        "apns-collapse-id": `hitze-${aggregate.municipalityId}`,
+        "apns-collapse-id": collapseId,
       },
       payload: {
         aps: {
           sound: "default",
-          "thread-id": `hitze-${aggregate.municipalityId}`,
+          "thread-id": collapseId,
         },
       },
     },
@@ -627,60 +1081,101 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
     const aggregatesMap = aggregateWarnings(normalizedWarnings);
 
     const aggregates = Array.from(aggregatesMap.values()).sort((a, b) =>
-      a.municipalityId.localeCompare(b.municipalityId)
+      aggregateStateKey(a).localeCompare(aggregateStateKey(b))
     );
 
     const currentSignatures: Record<string, string> = {};
     for (const aggregate of aggregates) {
-      currentSignatures[aggregate.municipalityId] = buildMunicipalitySignature(aggregate);
+      currentSignatures[aggregateStateKey(aggregate)] = buildMunicipalitySignature(aggregate);
     }
 
     // Fail-closed: without Redis state comparison no push is sent.
     const redis = await getRedisClient();
     const previousSignatures = await redis.getSignatures();
+    const previousSendMetadata = await redis.getSendMetadata();
+    const todayDayKey = currentDayKeyVienna();
+    const sendMetaCutoffDayKey = dayKeyDaysAgoVienna(SEND_META_RETENTION_DAYS);
 
-    const previousMunicipalityIds = new Set(Object.keys(previousSignatures));
-    const currentMunicipalityIds = new Set(Object.keys(currentSignatures));
+    const staleSendMetadataKeys = Object.entries(previousSendMetadata)
+      .filter(([, metadata]) => metadata.dayKey < sendMetaCutoffDayKey)
+      .map(([key]) => key);
 
-    const changedMunicipalityIds = aggregates
-      .filter((aggregate) => previousSignatures[aggregate.municipalityId] !== currentSignatures[aggregate.municipalityId])
-      .map((aggregate) => aggregate.municipalityId);
+    if (staleSendMetadataKeys.length > 0) {
+      await redis.removeSendMetadata(staleSendMetadataKeys);
+      staleSendMetadataKeys.forEach((key) => {
+        delete previousSendMetadata[key];
+      });
+    }
 
-    const removedMunicipalityIds = Array.from(previousMunicipalityIds).filter(
-      (municipalityId) => !currentMunicipalityIds.has(municipalityId)
-    );
+    const previousAggregateKeys = new Set(Object.keys(previousSignatures));
+    const currentAggregateKeys = new Set(Object.keys(currentSignatures));
 
-    const changedAggregates = aggregates.filter((aggregate) =>
-      changedMunicipalityIds.includes(aggregate.municipalityId)
-    );
+    const changedAggregateKeys = aggregates
+      .map((aggregate) => aggregateStateKey(aggregate))
+      .filter((key) => previousSignatures[key] !== currentSignatures[key]);
+
+    const removedAggregateKeys = Array.from(previousAggregateKeys).filter((key) => !currentAggregateKeys.has(key));
+
+    const changedAggregateKeySet = new Set(changedAggregateKeys);
+    const changedAggregates = aggregates.filter((aggregate) => changedAggregateKeySet.has(aggregateStateKey(aggregate)));
+
+    const sendCandidates: MunicipalityAggregate[] = [];
+    const skippedRateLimitedKeys = new Set<string>();
+
+    for (const aggregate of changedAggregates) {
+      const key = aggregateStateKey(aggregate);
+      const previousMetadata = previousSendMetadata[key];
+      const currentTimeWindow = aggregateTimeWindow(aggregate);
+      const currentStart = currentTimeWindow.start;
+      const currentEnd = currentTimeWindow.end;
+      const sentToday = previousMetadata?.dayKey === todayDayKey;
+      const beginChanged = (previousMetadata?.start ?? "") !== currentStart;
+      const endChanged = (previousMetadata?.end ?? "") !== currentEnd;
+
+      if (!sentToday || beginChanged || endChanged) {
+        sendCandidates.push(aggregate);
+        continue;
+      }
+
+      skippedRateLimitedKeys.add(key);
+    }
 
     const messaging = getFirebaseMessagingClient();
 
     const sendResults = await Promise.allSettled(
-      changedAggregates.map(async (aggregate) => {
+      sendCandidates.map(async (aggregate) => {
         await sendMunicipalityWarning(messaging, aggregate);
         return aggregate.municipalityId;
       })
     );
 
-    const successfulSignatures: Record<string, string> = {};
+    const signaturesToPersist: Record<string, string> = {};
+    const sendMetadataToPersist: Record<string, AggregateSendMetadata> = {};
     const failedMunicipalities: string[] = [];
 
     sendResults.forEach((result, index) => {
-      const municipalityId = changedAggregates[index]?.municipalityId;
+      const aggregate = sendCandidates[index];
+      const key = aggregate ? aggregateStateKey(aggregate) : null;
 
-      if (!municipalityId) {
+      if (!aggregate || !key) {
         return;
       }
 
       if (result.status === "fulfilled") {
-        successfulSignatures[municipalityId] = currentSignatures[municipalityId];
+        signaturesToPersist[key] = currentSignatures[key];
+        const timeWindow = aggregateTimeWindow(aggregate);
+        sendMetadataToPersist[key] = {
+          dayKey: todayDayKey,
+          start: timeWindow.start,
+          end: timeWindow.end,
+        };
         return;
       }
 
-      failedMunicipalities.push(municipalityId);
+      failedMunicipalities.push(`${aggregate.kind}:${aggregate.municipalityId}`);
       console.error(`[${requestId}] fcm_send_failed`, {
-        municipalityId,
+        municipalityId: aggregate.municipalityId,
+        warningKind: aggregate.kind,
         error:
           result.reason instanceof Error
             ? result.reason.message
@@ -688,18 +1183,28 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
       });
     });
 
-    if (Object.keys(successfulSignatures).length > 0) {
-      await redis.setSignatures(successfulSignatures);
+    for (const key of skippedRateLimitedKeys) {
+      signaturesToPersist[key] = currentSignatures[key];
     }
 
-    const cleared = await redis.removeSignatures(removedMunicipalityIds);
+    if (Object.keys(signaturesToPersist).length > 0) {
+      await redis.setSignatures(signaturesToPersist);
+    }
+
+    if (Object.keys(sendMetadataToPersist).length > 0) {
+      await redis.setSendMetadata(sendMetadataToPersist);
+    }
+
+    const cleared = await redis.removeSignatures(removedAggregateKeys);
+    await redis.removeSendMetadata(removedAggregateKeys);
 
     const response: HandlerSuccessResponse = {
       requestId,
       processedWarnings: normalizedWarnings.length,
       affectedMunicipalities: aggregates.length,
-      sent: Object.keys(successfulSignatures).length,
-      skippedUnchanged: aggregates.length - changedMunicipalityIds.length,
+      sent: Object.keys(sendMetadataToPersist).length,
+      skippedUnchanged: aggregates.length - changedAggregateKeys.length,
+      skippedRateLimited: skippedRateLimitedKeys.size,
       cleared,
       failed: failedMunicipalities.length,
       failedMunicipalities,
