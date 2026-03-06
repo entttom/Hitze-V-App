@@ -86,6 +86,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -848,6 +850,12 @@ private fun AddWorkplaceScreen(
     onSearch: () -> Unit,
     onUseAddress: (AddressSearchResult) -> Unit
 ) {
+    val addressFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        addressFocusRequester.requestFocus()
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
@@ -897,6 +905,7 @@ private fun AddWorkplaceScreen(
                                 value = uiState.addressQuery,
                                 placeholder = copy.addressFieldHint,
                                 onValueChange = onAddressChanged,
+                                focusRequester = addressFocusRequester,
                                 imeAction = ImeAction.Search,
                                 keyboardActions = KeyboardActions(onSearch = { onSearch() }),
                                 leadingIcon = {
@@ -954,6 +963,7 @@ private fun InputSection(
     value: String,
     placeholder: String,
     onValueChange: (String) -> Unit,
+    focusRequester: FocusRequester? = null,
     imeAction: ImeAction = ImeAction.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     leadingIcon: @Composable (() -> Unit)? = null
@@ -968,7 +978,15 @@ private fun InputSection(
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (focusRequester != null) {
+                            Modifier.focusRequester(focusRequester)
+                        } else {
+                            Modifier
+                        }
+                    ),
                 leadingIcon = leadingIcon,
                 trailingIcon = if (value.isNotBlank()) {
                     {

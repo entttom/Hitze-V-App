@@ -476,6 +476,10 @@ if (developMode) {
         res.redirect("/test/push/ui");
     });
     app.get("/test/push/ui", (_req, res) => {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+        res.setHeader("Surrogate-Control", "no-store");
         res.status(200).type("html").send(renderTestPushPage((0, hitze_1.listTestMunicipalityOptions)()));
     });
     app.post("/test/push", async (req, res) => {
