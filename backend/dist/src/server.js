@@ -262,7 +262,6 @@ function renderTestPushPage(municipalities) {
   <body>
     <main>
       <h1>Hitze-V Testversand</h1>
-      <p>Empfänger aus <code>gemliste_knz.xls</code>. Suche funktioniert über Kennziffer oder Gemeindename.</p>
 
       <div class="layout">
         <section class="panel stack">
