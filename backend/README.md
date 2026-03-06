@@ -51,7 +51,18 @@ Optional:
 3. Build using the included `Dockerfile`.
 4. Configure environment variables from `.env.example`.
    - For Coolify Redis, use the internal Redis connection URL as `REDIS_URL`.
-5. Add a Coolify scheduler to call:
-   - `POST https://<your-domain>/cron/hitze`
-   - Header: `Authorization: Bearer <CRON_SECRET>`
-6. Use `GET /health` as health check.
+   - Set `CRON_SECRET` in the app environment variables (required for protected `POST /cron/hitze`).
+5. Add a Coolify Scheduled Task.
+   - If your scheduler supports URL/method/headers, call:
+     - `POST https://<your-domain>/cron/hitze`
+     - Header: `Authorization: Bearer <CRON_SECRET>`
+   - If your scheduler only supports a command, use:
+
+```bash
+sh -lc 'wget -qO- --header="Authorization: Bearer $CRON_SECRET" --post-data="" http://127.0.0.1:3000/cron/hitze >/dev/null'
+```
+
+6. Recommended frequency: `*/10 * * * *` (every 10 minutes).
+7. Use `GET /health` as health check.
+
+Note: The `wget` command is usually more robust in Coolify scheduled tasks than a complex `node -e` one-liner because it avoids fragile shell escaping.
