@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getMessaging, type Messaging } from "firebase-admin/messaging";
@@ -13,7 +13,6 @@ const SEND_META_RETENTION_DAYS = 7;
 const WARNING_TYPE_HEAT = 6;
 const WARNING_TYPE_COLD = 7;
 const MUNICIPALITY_LIST_FILE = "gemliste_knz.xls";
-const STATIC_GEOSPHERE_RESPONSE_FILE = "example_response.json";
 const DEFAULT_MIN_WARNING_LEVEL = 2;
 const GEO_FETCH_TIMEOUT_MS = 10_000;
 const GEO_FETCH_RETRIES = 2;
@@ -636,38 +635,6 @@ function getStaticGeoSphereUrl(): string | null {
   return asString(process.env.HITZE_STATIC_GEOSPHERE_URL);
 }
 
-function staticGeoSphereResponsePaths(): string[] {
-  return [
-    path.resolve(process.cwd(), STATIC_GEOSPHERE_RESPONSE_FILE),
-    path.resolve(process.cwd(), "backend", STATIC_GEOSPHERE_RESPONSE_FILE),
-    path.resolve(__dirname, "..", "..", "..", STATIC_GEOSPHERE_RESPONSE_FILE),
-  ];
-}
-
-function loadStaticGeoSpherePayload(): unknown {
-  for (const candidatePath of staticGeoSphereResponsePaths()) {
-    if (!existsSync(candidatePath)) {
-      continue;
-    }
-
-    try {
-      return JSON.parse(readFileSync(candidatePath, "utf8")) as unknown;
-    } catch (error) {
-      throw new AppError(
-        500,
-        "STATIC_GEOSPHERE_PAYLOAD_INVALID",
-        `Static GeoSphere payload at ${candidatePath} is invalid: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
-  throw new AppError(
-    500,
-    "STATIC_GEOSPHERE_PAYLOAD_MISSING",
-    `Static GeoSphere payload file not found. Checked: ${staticGeoSphereResponsePaths().join(", ")}`
-  );
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -757,7 +724,15 @@ async function fetchGeoSphereWarnings(
 
   if (useStaticGeoSphereResponse()) {
     const staticUrl = getStaticGeoSphereUrl();
-    payload = staticUrl ? await fetchJsonWithRetry(staticUrl, requestId) : loadStaticGeoSpherePayload();
+    if (!staticUrl) {
+      throw new AppError(
+        500,
+        "CONFIG_ERROR",
+        "HITZE_STATIC_GEOSPHERE_URL must be set when HITZE_USE_STATIC_GEOSPHERE_RESPONSE is enabled."
+      );
+    }
+
+    payload = await fetchJsonWithRetry(staticUrl, requestId);
   } else {
     payload = await fetchJsonWithRetry(GEOSPHERE_WARNSTATUS_URL, requestId);
   }

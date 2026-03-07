@@ -130,7 +130,7 @@ Wichtige Variablen:
 - `CRON_SECRET`: Bearer-Token fuer den geschuetzten Cron-POST-Endpunkt
 - `HITZE_MIN_LEVEL`: Mindestwarnstufe fuer den Versand, Standard `2`
 - `HITZE_USE_STATIC_GEOSPHERE_RESPONSE`: aktiviert fuer Tests eine statische Antwort statt der GeoSphere-API
-- `HITZE_STATIC_GEOSPHERE_URL`: optionale URL fuer die statische Testantwort, zum Beispiel `https://raw.githubusercontent.com/entttom/Hitze-V-App/main/backend/example_response.json`; ohne Wert wird lokal `backend/example_response.json` geladen
+- `HITZE_STATIC_GEOSPHERE_URL`: verpflichtende URL fuer die statische Testantwort, wenn `HITZE_USE_STATIC_GEOSPHERE_RESPONSE=true` ist, zum Beispiel `https://raw.githubusercontent.com/entttom/Hitze-V-App/main/backend/example_response.json`
 - `FIREBASE_SERVICE_ACCOUNT`: kompletter Firebase-Service-Account als JSON-String
 - `REDIS_URL`: Verbindungszeichenfolge zur Redis-Instanz
 - `DEVELOP` oder `develop`: aktiviert lokale Test-Endpunkte und Testoberflaeche
