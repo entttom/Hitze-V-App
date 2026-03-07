@@ -80,7 +80,22 @@ final class DashboardViewModel: ObservableObject {
             do {
                 let snapshot = try await dataService.fetchSnapshot(for: worksite.coordinate)
                 nextSnapshots[worksite.id] = snapshot
+            } catch is CancellationError {
+                NSLog(
+                    "Dashboard refresh cancelled for worksite %@ at %.6f, %.6f",
+                    worksite.name,
+                    worksite.latitude,
+                    worksite.longitude
+                )
+                return
             } catch {
+                NSLog(
+                    "Dashboard refresh failed for worksite %@ at %.6f, %.6f: %@",
+                    worksite.name,
+                    worksite.latitude,
+                    worksite.longitude,
+                    error.localizedDescription
+                )
                 errors.append(error.localizedDescription)
             }
         }
@@ -89,6 +104,7 @@ final class DashboardViewModel: ObservableObject {
 
         await subscriptionManager.syncTopics(for: worksites.map(\.coordinate))
         if let error = subscriptionManager.lastError?.errorDescription {
+            NSLog("Subscription sync failed: %@", error)
             errors.append(error)
         }
 

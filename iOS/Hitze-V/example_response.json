@@ -118,48 +118,96 @@
       {
         "type": "Warning",
         "properties": {
-          "warnid": 4149,
-          "chgid": 6,
-          "verlaufid": 2,
-          "warntypid": 1,
-          "begin": "27.03.2023 08:00",
-          "end": "27.03.2023 18:00",
-          "create": "2023-03-27 06:00:00+00",
-          "text": "Gelbe Windwarnung von Mo, 27.03.2023 08:00 bis Mo, 27.03.2023 18:00",
-          "auswirkungen": "* Äste können herabstürzen und Gegenstände herumgewirbelt werden.\n* Erhöhte Unfallgefahr durch starken Seitenwind auf Brücken und exponierten Straßenzügen, insbesondere für LKW oder bei Fahrten mit großen Anhängern",
-          "empfehlungen": "* Seien Sie in Wäldern, Parks und Alleen achtsam, rechnen Sie mit herabstürzenden Ästen!\n* Reduzieren Sie im Straßenverkehr auf Brücken und exponierten Straßenzügen die Geschwindigkeit, vermeiden Sie Überholmanöver und halten Sie Abstand!",
-          "meteotext": "Mit einer nordwestlichen Strömung lebt im Ostalpenraum der Nordwestwind deutlich auf und erreicht in den Niederungen Windspitzen zwischen 60 und 80km/h. Im Bergland werden zum Teil Sturmböen von über 100km/h erreicht.",
-          "updategrund": "",
-          "warnstufeid": 1,
+          "warnid": 5000,
+          "chgid": 1,
+          "verlaufid": 1,
+          "warntypid": 6,
+          "begin": "07.03.2026 14:00",
+          "end": "07.03.2026 18:00",
+          "create": "2026-03-07 08:00:00+00",
+          "text": "Hitzewarnung Stufe 2 von 07.03.2026 14:00 bis 07.03.2026 18:00",
+          "auswirkungen": "Erhoehte Hitzebelastung im Tagesverlauf.",
+          "empfehlungen": "Ausreichend trinken, Schatten nutzen, Pausen einplanen.",
+          "meteotext": "Beispieldaten fuer App-Tests mit unterschiedlichen Uhrzeiten.",
+          "updategrund": "Testdatensatz",
+          "warnstufeid": 2,
           "rawinfo": {
-            "wtype": 1,
-            "wlevel": 1,
-            "start": "1679896800",
-            "end": "1679932800"
+            "wtype": 6,
+            "wlevel": 2,
+            "start": "1772888400",
+            "end": "1772902800"
           }
         }
       },
       {
         "type": "Warning",
         "properties": {
-          "warnid": 4150,
-          "chgid": 2,
+          "warnid": 5001,
+          "chgid": 1,
           "verlaufid": 1,
-          "warntypid": 1,
-          "begin": "07.03.2026 15:00",
-          "end": "07.03.2026 18:00",
-          "create": "2023-03-27 08:00:00+00",
-          "text": "Gelbe Windwarnung von Di, 28.03.2023 08:00 bis Di, 28.03.2023 18:00",
-          "auswirkungen": "* Äste können herabstürzen und Gegenstände herumgewirbelt werden.\n* Erhöhte Unfallgefahr durch starken Seitenwind auf Brücken und exponierten Straßenzügen, insbesondere für LKW oder bei Fahrten mit großen Anhängern",
-          "empfehlungen": "* Seien Sie in Wäldern, Parks und Alleen achtsam, rechnen Sie mit herabstürzenden Ästen!\n* Reduzieren Sie im Straßenverkehr auf Brücken und exponierten Straßenzügen die Geschwindigkeit, vermeiden Sie Überholmanöver und halten Sie Abstand!",
-          "meteotext": "Mit einer stürmische Nordwestströmung erreichen Sturmböen etwa 60 bis 80 km/h. Im Gebirge sind auch Böen über 100 km/h zu erwarten.",
-          "updategrund": "",
-          "warnstufeid": 1,
+          "warntypid": 6,
+          "begin": "08.03.2026 09:00",
+          "end": "08.03.2026 13:00",
+          "create": "2026-03-07 08:00:00+00",
+          "text": "Hitzewarnung Stufe 2 von 08.03.2026 09:00 bis 08.03.2026 13:00",
+          "auswirkungen": "Erhoehte Hitzebelastung im Tagesverlauf.",
+          "empfehlungen": "Ausreichend trinken, Schatten nutzen, Pausen einplanen.",
+          "meteotext": "Beispieldaten fuer App-Tests mit unterschiedlichen Uhrzeiten.",
+          "updategrund": "Testdatensatz",
+          "warnstufeid": 2,
           "rawinfo": {
             "wtype": 6,
             "wlevel": 2,
-            "start": "1679983200",
-            "end": "1680019200"
+            "start": "1772956800",
+            "end": "1772971200"
+          }
+        }
+      },
+      {
+        "type": "Warning",
+        "properties": {
+          "warnid": 5002,
+          "chgid": 1,
+          "verlaufid": 1,
+          "warntypid": 6,
+          "begin": "09.03.2026 11:30",
+          "end": "09.03.2026 17:00",
+          "create": "2026-03-07 08:00:00+00",
+          "text": "Hitzewarnung Stufe 3 von 09.03.2026 11:30 bis 09.03.2026 17:00",
+          "auswirkungen": "Erhoehte Hitzebelastung im Tagesverlauf.",
+          "empfehlungen": "Ausreichend trinken, Schatten nutzen, Pausen einplanen.",
+          "meteotext": "Beispieldaten fuer App-Tests mit unterschiedlichen Uhrzeiten.",
+          "updategrund": "Testdatensatz",
+          "warnstufeid": 3,
+          "rawinfo": {
+            "wtype": 6,
+            "wlevel": 3,
+            "start": "1773052200",
+            "end": "1773072000"
+          }
+        }
+      },
+      {
+        "type": "Warning",
+        "properties": {
+          "warnid": 5003,
+          "chgid": 1,
+          "verlaufid": 1,
+          "warntypid": 6,
+          "begin": "10.03.2026 12:15",
+          "end": "10.03.2026 19:45",
+          "create": "2026-03-07 08:00:00+00",
+          "text": "Hitzewarnung Stufe 3 von 10.03.2026 12:15 bis 10.03.2026 19:45",
+          "auswirkungen": "Erhoehte Hitzebelastung im Tagesverlauf.",
+          "empfehlungen": "Ausreichend trinken, Schatten nutzen, Pausen einplanen.",
+          "meteotext": "Beispieldaten fuer App-Tests mit unterschiedlichen Uhrzeiten.",
+          "updategrund": "Testdatensatz",
+          "warnstufeid": 3,
+          "rawinfo": {
+            "wtype": 6,
+            "wlevel": 3,
+            "start": "1773141300",
+            "end": "1773168300"
           }
         }
       }

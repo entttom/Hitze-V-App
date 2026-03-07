@@ -23,6 +23,16 @@ final class DashboardDataService {
         return defaultGeoSphereBaseURL
     }
 
+    private var customGeoSphereURL: String? {
+        guard AppFeatureFlags.enableCustomGeoSphereURLSetting else {
+            return nil
+        }
+
+        let configuredURL = UserDefaults.standard.string(forKey: "network.customGeoSphereUrl")?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return configuredURL.isEmpty ? nil : configuredURL
+    }
+
     func fetchSnapshot(for coordinate: CLLocationCoordinate2D) async throws -> WorksiteSnapshot {
         async let geoSphere = fetchGeoSphere(for: coordinate)
         async let meteo = fetchOpenMeteo(for: coordinate)
@@ -72,19 +82,34 @@ final class DashboardDataService {
     }
 
     private func fetchGeoSphere(for coordinate: CLLocationCoordinate2D) async throws -> GeoSphereResolvedState {
-        var components = URLComponents(string: geoSphereBaseURL)
-        components?.queryItems = [
-            URLQueryItem(name: "lat", value: String(format: "%.6f", coordinate.latitude)),
-            URLQueryItem(name: "lon", value: String(format: "%.6f", coordinate.longitude))
-        ]
+        let url: URL
+        if let customURL = customGeoSphereURL {
+            guard let parsedURL = URL(string: customURL) else {
+                throw DashboardDataError.invalidRequest
+            }
+            url = parsedURL
+        } else {
+            var components = URLComponents(string: geoSphereBaseURL)
+            components?.queryItems = [
+                URLQueryItem(name: "lat", value: String(format: "%.6f", coordinate.latitude)),
+                URLQueryItem(name: "lon", value: String(format: "%.6f", coordinate.longitude))
+            ]
 
-        guard let url = components?.url else {
-            throw DashboardDataError.invalidRequest
+            guard let parsedURL = components?.url else {
+                throw DashboardDataError.invalidRequest
+            }
+            url = parsedURL
         }
 
+        NSLog("GeoSphere request URL: %@", url.absoluteString)
         let (data, response) = try await performGET(url)
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
+            if let httpResponse = response as? HTTPURLResponse {
+                let bodyPreview = String(data: data.prefix(600), encoding: .utf8) ?? "<non-utf8 body>"
+                NSLog("GeoSphere HTTP failure: %ld for %@", httpResponse.statusCode, url.absoluteString)
+                NSLog("GeoSphere HTTP failure body preview: %@", bodyPreview)
+            }
             throw DashboardDataError.network(message: "GeoSphere HTTP Fehler")
         }
 
@@ -92,7 +117,7 @@ final class DashboardDataService {
         do {
             decoded = try JSONDecoder().decode(GeoSphereLookupResponse.self, from: data)
         } catch {
-            print("Decoding err:", error)
+            debugGeoSphereDecodingFailure(error: error, data: data, url: url, response: httpResponse)
             throw DashboardDataError.invalidGeoSphereResponse
         }
 
@@ -109,16 +134,23 @@ final class DashboardDataService {
         }
 
         let municipalityName = municipality.name ?? "Gemeinde \(municipalityID)"
+        let warnings = decoded.properties?.warnings ?? []
+
+        if warnings.isEmpty {
+            NSLog("GeoSphere response for municipality %@ contains 0 warnings", municipalityID)
+        } else {
+            NSLog("GeoSphere response for municipality %@ contains %ld warnings", municipalityID, warnings.count)
+        }
 
         return GeoSphereResolvedState(
             municipalityID: municipalityID,
             municipalityName: municipalityName,
-            warnings: decoded.properties?.warnings ?? []
+            warnings: warnings
         )
     }
     
     private func parseGeosphereTimestamp(_ value: String?) -> Date? {
-        guard let value = value else { return nil }
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
         
         if let timeInterval = TimeInterval(value) {
             // ZamG timestamps are often in milliseconds
@@ -130,6 +162,14 @@ final class DashboardDataService {
         
         let isoFormatter = ISO8601DateFormatter()
         if let date = isoFormatter.date(from: value) {
+            return date
+        }
+
+        let localFormatter = DateFormatter()
+        localFormatter.locale = Locale(identifier: "de_AT_POSIX")
+        localFormatter.timeZone = viennaTimeZone
+        localFormatter.dateFormat = "dd.MM.yyyy HH:mm"
+        if let date = localFormatter.date(from: value) {
             return date
         }
         
@@ -189,8 +229,8 @@ final class DashboardDataService {
 
         return warnings.compactMap { warning in
             let properties = warning.properties
-            let startDate = parseGeosphereTimestamp(properties.start)
-            let endDate = parseGeosphereTimestamp(properties.end)
+            let startDate = parseGeosphereTimestamp(resolvedWarningStart(properties))
+            let endDate = parseGeosphereTimestamp(resolvedWarningEnd(properties))
 
             let isActiveOnTargetDate: Bool
             switch (startDate, endDate) {
@@ -208,14 +248,55 @@ final class DashboardDataService {
                 return nil
             }
 
-            let level = properties.warnstufeid ?? properties.wlevel ?? properties.rawinfo?.wlevel ?? properties.rawfinfo?.wlevel ?? 0
+            let level = resolvedWarningLevel(properties)
             return DailyHeatWarning(level: level, start: startDate, end: endDate)
         }
     }
 
+    private func resolvedWarningStart(_ properties: GeoSphereWarningProperties) -> String? {
+        let candidates = [
+            properties.start,
+            properties.begin,
+            properties.rawinfo?.start,
+            properties.rawfinfo?.start
+        ]
+
+        return candidates.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty }
+    }
+
+    private func resolvedWarningEnd(_ properties: GeoSphereWarningProperties) -> String? {
+        let candidates = [
+            properties.end,
+            properties.rawinfo?.end,
+            properties.rawfinfo?.end
+        ]
+
+        return candidates.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty }
+    }
+
+    private func resolvedWarningLevel(_ properties: GeoSphereWarningProperties) -> Int {
+        let candidates = [
+            properties.warnstufeid,
+            properties.wlevel,
+            properties.rawinfo?.wlevel,
+            properties.rawfinfo?.wlevel
+        ]
+        .compactMap { $0 }
+
+        return candidates.max() ?? 0
+    }
+
     private func isHeatWarning(_ properties: GeoSphereWarningProperties) -> Bool {
-        if let type = properties.wtype ?? properties.warntypid ?? properties.rawinfo?.wtype ?? properties.rawfinfo?.wtype {
-            return type == 6
+        let typeCandidates = [
+            properties.wtype,
+            properties.warntypid,
+            properties.rawinfo?.wtype,
+            properties.rawfinfo?.wtype
+        ]
+        .compactMap { $0 }
+
+        if !typeCandidates.isEmpty {
+            return typeCandidates.contains(6)
         }
 
         guard let textualType = properties.warningType?.lowercased() else {
@@ -262,9 +343,41 @@ final class DashboardDataService {
 
         do {
             return try await urlSession.data(for: request)
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            NSLog("Network transport error for %@: %@", url.absoluteString, error.localizedDescription)
             throw DashboardDataError.network(message: error.localizedDescription)
         }
+    }
+
+    private func debugGeoSphereDecodingFailure(
+        error: Error,
+        data: Data,
+        url: URL,
+        response: HTTPURLResponse
+    ) {
+        NSLog("GeoSphere decode failed for URL: %@", url.absoluteString)
+        NSLog("GeoSphere HTTP status: %ld", response.statusCode)
+        NSLog("GeoSphere decoding error: %@", String(describing: error))
+
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            NSLog("GeoSphere top-level keys: %@", object.keys.sorted().joined(separator: ", "))
+
+            if let firstKey = object.keys.sorted().first,
+               let nestedObject = object[firstKey] as? [String: Any] {
+                NSLog(
+                    "GeoSphere nested keys for %@: %@",
+                    firstKey,
+                    nestedObject.keys.sorted().joined(separator: ", ")
+                )
+            }
+        }
+
+        let bodyPreview = String(data: data.prefix(1200), encoding: .utf8) ?? "<non-utf8 body>"
+        NSLog("GeoSphere body preview: %@", bodyPreview)
     }
 }
 
@@ -332,6 +445,7 @@ private struct GeoSphereWarningProperties: Decodable {
     let rawinfo: GeoSphereRawInfo?
     let rawfinfo: GeoSphereRawInfo?
     let warningType: String?
+    let begin: String?
     let start: String?
     let end: String?
 
@@ -343,6 +457,7 @@ private struct GeoSphereWarningProperties: Decodable {
         case rawinfo
         case rawfinfo
         case warningType = "warning_type"
+        case begin
         case start
         case end
     }
@@ -351,6 +466,8 @@ private struct GeoSphereWarningProperties: Decodable {
 private struct GeoSphereRawInfo: Decodable {
     let wtype: Int?
     let wlevel: Int?
+    let start: String?
+    let end: String?
 }
 
 private struct OpenMeteoForecastResponse: Decodable {

@@ -35,6 +35,16 @@ final class SubscriptionManager: ObservableObject {
         return defaultGeoSphereBaseURL
     }
 
+    private var customGeoSphereURL: String? {
+        guard AppFeatureFlags.enableCustomGeoSphereURLSetting else {
+            return nil
+        }
+
+        let configuredURL = userDefaults.string(forKey: "network.customGeoSphereUrl")?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return configuredURL.isEmpty ? nil : configuredURL
+    }
+
     /// Synchronisiert ein einzelnes Arbeitsplatz-Topic anhand einer Koordinate.
     func syncTopic(for coordinate: CLLocationCoordinate2D) async {
         await syncTopics(for: [coordinate])
@@ -57,6 +67,9 @@ final class SubscriptionManager: ObservableObject {
             do {
                 let municipalityID = try await fetchMunicipalityID(for: coordinate)
                 resolvedMunicipalityIDs.insert(municipalityID)
+            } catch is CancellationError {
+                NSLog("GeoSphere subscription lookup cancelled")
+                return
             } catch let error as SubscriptionError {
                 lookupErrors.append(error)
             } catch {
@@ -165,26 +178,41 @@ final class SubscriptionManager: ObservableObject {
     }
 
     private func fetchMunicipalityID(for coordinate: CLLocationCoordinate2D) async throws -> String {
-        var components = URLComponents(string: geosphereBaseURL)
-        components?.queryItems = [
-            URLQueryItem(name: "lat", value: String(format: "%.6f", coordinate.latitude)),
-            URLQueryItem(name: "lon", value: String(format: "%.6f", coordinate.longitude))
-        ]
+        let url: URL
+        if let customURL = customGeoSphereURL {
+            guard let parsedURL = URL(string: customURL) else {
+                throw SubscriptionError.invalidResponse
+            }
+            url = parsedURL
+        } else {
+            var components = URLComponents(string: geosphereBaseURL)
+            components?.queryItems = [
+                URLQueryItem(name: "lat", value: String(format: "%.6f", coordinate.latitude)),
+                URLQueryItem(name: "lon", value: String(format: "%.6f", coordinate.longitude))
+            ]
 
-        guard let url = components?.url else {
-            throw SubscriptionError.invalidResponse
+            guard let parsedURL = components?.url else {
+                throw SubscriptionError.invalidResponse
+            }
+            url = parsedURL
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = networkTimeout
 
+        NSLog("GeoSphere subscription request URL: %@", url.absoluteString)
         let data: Data
         let response: URLResponse
 
         do {
             (data, response) = try await urlSession.data(for: request)
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            NSLog("GeoSphere subscription transport error for %@: %@", url.absoluteString, error.localizedDescription)
             throw SubscriptionError.network(message: error.localizedDescription)
         }
 
@@ -193,6 +221,9 @@ final class SubscriptionManager: ObservableObject {
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
+            let bodyPreview = String(data: data.prefix(600), encoding: .utf8) ?? "<non-utf8 body>"
+            NSLog("GeoSphere subscription HTTP failure: %ld for %@", httpResponse.statusCode, url.absoluteString)
+            NSLog("GeoSphere subscription HTTP body preview: %@", bodyPreview)
             throw SubscriptionError.network(message: "GeoSphere HTTP \(httpResponse.statusCode)")
         }
 
@@ -200,6 +231,7 @@ final class SubscriptionManager: ObservableObject {
         do {
             decoded = try JSONDecoder().decode(GeoSphereLookupResponse.self, from: data)
         } catch {
+            debugGeoSphereDecodingFailure(error: error, data: data, url: url, response: httpResponse)
             throw SubscriptionError.invalidResponse
         }
 
@@ -215,6 +247,33 @@ final class SubscriptionManager: ObservableObject {
         }
 
         return municipalityID
+    }
+
+    private func debugGeoSphereDecodingFailure(
+        error: Error,
+        data: Data,
+        url: URL,
+        response: HTTPURLResponse
+    ) {
+        NSLog("GeoSphere decode failed for URL: %@", url.absoluteString)
+        NSLog("GeoSphere HTTP status: %ld", response.statusCode)
+        NSLog("GeoSphere decoding error: %@", String(describing: error))
+
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            NSLog("GeoSphere top-level keys: %@", object.keys.sorted().joined(separator: ", "))
+
+            if let firstKey = object.keys.sorted().first,
+               let nestedObject = object[firstKey] as? [String: Any] {
+                NSLog(
+                    "GeoSphere nested keys for %@: %@",
+                    firstKey,
+                    nestedObject.keys.sorted().joined(separator: ", ")
+                )
+            }
+        }
+
+        let bodyPreview = String(data: data.prefix(1200), encoding: .utf8) ?? "<non-utf8 body>"
+        NSLog("GeoSphere body preview: %@", bodyPreview)
     }
 
     private func subscribe(toMunicipalityID municipalityID: String) async throws {

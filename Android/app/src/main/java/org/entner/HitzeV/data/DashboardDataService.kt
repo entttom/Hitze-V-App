@@ -26,7 +26,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import java.util.Locale
 
@@ -151,19 +153,31 @@ class DashboardDataService(
 
     private fun parseWarning(objectValue: JsonObject): GeoSphereWarning? {
         val properties = objectValue["properties"]?.jsonObject ?: return null
+        val warningTypeCandidates = listOfNotNull(
+            properties["wtype"].asInt(),
+            properties["warntypid"].asInt(),
+            properties["rawinfo"]?.jsonObject?.get("wtype").asInt(),
+            properties["rawfinfo"]?.jsonObject?.get("wtype").asInt()
+        )
+        val warningLevelCandidates = listOfNotNull(
+            properties["warnstufeid"].asInt(),
+            properties["wlevel"].asInt(),
+            properties["rawinfo"]?.jsonObject?.get("wlevel").asInt(),
+            properties["rawfinfo"]?.jsonObject?.get("wlevel").asInt()
+        )
+
         return GeoSphereWarning(
-            warningTypeId = properties["wtype"].asInt()
-                ?: properties["warntypid"].asInt()
-                ?: properties["rawinfo"]?.jsonObject?.get("wtype").asInt()
-                ?: properties["rawfinfo"]?.jsonObject?.get("wtype").asInt(),
-            warningLevel = properties["warnstufeid"].asInt()
-                ?: properties["wlevel"].asInt()
-                ?: properties["rawinfo"]?.jsonObject?.get("wlevel").asInt()
-                ?: properties["rawfinfo"]?.jsonObject?.get("wlevel").asInt()
-                ?: 0,
+            warningTypeId = warningTypeCandidates.firstOrNull(),
+            warningTypeCandidates = warningTypeCandidates,
+            warningLevel = warningLevelCandidates.maxOrNull() ?: 0,
             warningTypeText = properties["warning_type"].asStringOrNull(),
-            start = properties["start"].asStringOrNull(),
+            start = properties["start"].asStringOrNull()
+                ?: properties["begin"].asStringOrNull()
+                ?: properties["rawinfo"]?.jsonObject?.get("start").asStringOrNull()
+                ?: properties["rawfinfo"]?.jsonObject?.get("start").asStringOrNull(),
             end = properties["end"].asStringOrNull()
+                ?: properties["rawinfo"]?.jsonObject?.get("end").asStringOrNull()
+                ?: properties["rawfinfo"]?.jsonObject?.get("end").asStringOrNull()
         )
     }
 
@@ -175,6 +189,7 @@ class DashboardDataService(
 
     data class GeoSphereWarning(
         val warningTypeId: Int?,
+        val warningTypeCandidates: List<Int>,
         val warningLevel: Int,
         val warningTypeText: String?,
         val start: String?,
@@ -196,6 +211,11 @@ class DashboardDataService(
     )
 
     companion object {
+        private val localGeosphereDateTimeFormatters = listOf(
+            DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.GERMANY),
+            DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.US)
+        )
+
         private data class DailyHeatWarning(
             val level: Int,
             val start: Instant?,
@@ -218,7 +238,13 @@ class DashboardDataService(
             return try {
                 Instant.parse(trimmed)
             } catch (_: DateTimeParseException) {
-                null
+                localGeosphereDateTimeFormatters.firstNotNullOfOrNull { formatter ->
+                    runCatching {
+                        LocalDateTime.parse(trimmed, formatter)
+                            .atZone(ZoneId.of("Europe/Vienna"))
+                            .toInstant()
+                    }.getOrNull()
+                }
             }
         }
 
@@ -290,8 +316,9 @@ class DashboardDataService(
         }
 
         private fun isHeatWarning(warning: GeoSphereWarning): Boolean {
+            if (warning.warningTypeCandidates.contains(6)) return true
+
             val type = warning.warningTypeId
-            if (type == 6) return true
             if (type != null) return false
 
             val textualType = warning.warningTypeText?.lowercase(Locale.ROOT).orEmpty()
