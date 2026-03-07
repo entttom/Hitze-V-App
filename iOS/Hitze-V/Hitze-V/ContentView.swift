@@ -831,6 +831,14 @@ struct Copybook {
     var themeLight: String { t("Hell", "Light") }
     var themeDark: String { t("Dunkel", "Dark") }
     var languageSection: String { t("Sprache", "Language") }
+    var developerSection: String { t("Entwicklung", "Development") }
+    var customGeoSphereURLLabel: String { t("GeoSphere Test-URL", "GeoSphere test URL") }
+    var customGeoSphereURLHint: String {
+        t(
+            "Wenn gesetzt, wird diese URL statt des GeoSphere-Servers verwendet.",
+            "If set, this URL is used instead of the GeoSphere server."
+        )
+    }
     var legalLinkURL: String { "https://www.arbeitsmediziner.wien" }
     var legalLinkLabel: String { "arbeitsmediziner.wien" }
     var onboardingWelcomeTitle: String { t("Willkommen bei Hitze-V", "Welcome to Hitze-V") }

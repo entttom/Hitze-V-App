@@ -99,6 +99,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -247,7 +248,8 @@ private fun AppNavHost(
                 copy = copy,
                 onClose = { navController.popBackStack() },
                 onThemeChanged = viewModel::setTheme,
-                onLanguageChanged = viewModel::setLanguage
+                onLanguageChanged = viewModel::setLanguage,
+                onCustomGeoSphereUrlChanged = viewModel::setCustomGeoSphereUrl
             )
         }
         composable(Routes.Info) {
@@ -1083,7 +1085,8 @@ private fun SettingsScreen(
     copy: Copybook,
     onClose: () -> Unit,
     onThemeChanged: (AppTheme) -> Unit,
-    onLanguageChanged: (AppLanguage) -> Unit
+    onLanguageChanged: (AppLanguage) -> Unit,
+    onCustomGeoSphereUrlChanged: (String) -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
 
@@ -1152,6 +1155,21 @@ private fun SettingsScreen(
                         onClick = { onLanguageChanged(language) }
                     )
                     Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+
+            if (uiState.showsCustomGeoSphereUrlSetting) {
+                SectionCard(title = copy.developerSection) {
+                    Text(copy.customGeoSphereUrlHint, style = MaterialTheme.typography.bodyMedium)
+                    OutlinedTextField(
+                        value = uiState.customGeoSphereUrl,
+                        onValueChange = onCustomGeoSphereUrlChanged,
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text(copy.customGeoSphereUrlLabel) },
+                        placeholder = { Text(copy.customGeoSphereUrlPlaceholder) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                    )
                 }
             }
 

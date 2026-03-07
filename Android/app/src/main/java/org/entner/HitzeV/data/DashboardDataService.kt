@@ -3,6 +3,7 @@ package org.entner.HitzeV.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -29,9 +30,11 @@ import java.time.ZoneId
 import java.time.format.DateTimeParseException
 import java.util.Locale
 
-class DashboardDataService {
+class DashboardDataService(
+    private val appStorage: AppStorage
+) {
     private val json = Json { ignoreUnknownKeys = true }
-    private val geosphereBaseUrl = "https://warnungen.zamg.at/wsapp/api/getWarningsForCoords"
+    private val defaultGeosphereBaseUrl = "https://warnungen.zamg.at/wsapp/api/getWarningsForCoords"
     private val openMeteoBaseUrl = "https://api.open-meteo.com/v1/forecast"
     private val viennaZoneId = ZoneId.of("Europe/Vienna")
 
@@ -77,6 +80,7 @@ class DashboardDataService {
     }
 
     private suspend fun fetchGeoSphere(coordinate: GeoCoordinate): ResolvedMunicipality {
+        val geosphereBaseUrl = appStorage.customGeoSphereUrl.first().ifBlank { defaultGeosphereBaseUrl }
         val url = "$geosphereBaseUrl?lat=${coordinate.latitude.asQueryValue()}&lon=${coordinate.longitude.asQueryValue()}"
         val root = performGet(url)
 

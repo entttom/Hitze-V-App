@@ -3,12 +3,24 @@ import CoreLocation
 
 final class DashboardDataService {
     private let urlSession: URLSession
-    private let geosphereBaseURL = "https://warnungen.zamg.at/wsapp/api/getWarningsForCoords"
+    private let defaultGeoSphereBaseURL = "https://warnungen.zamg.at/wsapp/api/getWarningsForCoords"
     private let openMeteoBaseURL = "https://api.open-meteo.com/v1/forecast"
     private let viennaTimeZone = TimeZone(identifier: "Europe/Vienna") ?? .current
 
     init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
+    }
+
+    private var geoSphereBaseURL: String {
+        if AppFeatureFlags.enableCustomGeoSphereURLSetting {
+            let configuredURL = UserDefaults.standard.string(forKey: "network.customGeoSphereUrl")?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !configuredURL.isEmpty {
+                return configuredURL
+            }
+        }
+
+        return defaultGeoSphereBaseURL
     }
 
     func fetchSnapshot(for coordinate: CLLocationCoordinate2D) async throws -> WorksiteSnapshot {
@@ -60,7 +72,7 @@ final class DashboardDataService {
     }
 
     private func fetchGeoSphere(for coordinate: CLLocationCoordinate2D) async throws -> GeoSphereResolvedState {
-        var components = URLComponents(string: geosphereBaseURL)
+        var components = URLComponents(string: geoSphereBaseURL)
         components?.queryItems = [
             URLQueryItem(name: "lat", value: String(format: "%.6f", coordinate.latitude)),
             URLQueryItem(name: "lon", value: String(format: "%.6f", coordinate.longitude))

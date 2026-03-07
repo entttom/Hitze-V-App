@@ -50,6 +50,10 @@ class AppStorage(context: Context) {
         preferences[Keys.subscribedMunicipalityIds] ?: emptySet()
     }
 
+    val customGeoSphereUrl: Flow<String> = dataStore.safeData.map { preferences ->
+        preferences[Keys.customGeoSphereUrl]?.trim().orEmpty()
+    }
+
     suspend fun saveWorksites(worksites: List<Worksite>) {
         dataStore.edit { preferences ->
             preferences[Keys.worksites] = json.encodeToString(worksites)
@@ -80,6 +84,12 @@ class AppStorage(context: Context) {
         }
     }
 
+    suspend fun saveCustomGeoSphereUrl(url: String) {
+        dataStore.edit { preferences ->
+            preferences[Keys.customGeoSphereUrl] = url.trim()
+        }
+    }
+
     private val androidx.datastore.core.DataStore<Preferences>.safeData: Flow<Preferences>
         get() = data
             .catch { error ->
@@ -92,5 +102,6 @@ class AppStorage(context: Context) {
         val theme = stringPreferencesKey("app.theme")
         val hasCompletedOnboarding = booleanPreferencesKey("hasCompletedOnboarding")
         val subscribedMunicipalityIds = stringSetPreferencesKey("subscription_manager.subscribedMunicipalityIDs")
+        val customGeoSphereUrl = stringPreferencesKey("network.customGeoSphereUrl")
     }
 }

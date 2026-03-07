@@ -52,6 +52,13 @@ class Copybook(private val language: ResolvedLanguage) {
     val themeLight: String = t("Hell", "Light")
     val themeDark: String = t("Dunkel", "Dark")
     val languageSection: String = t("Sprache", "Language")
+    val developerSection: String = t("Entwicklung", "Development")
+    val customGeoSphereUrlLabel: String = t("GeoSphere Test-URL", "GeoSphere test URL")
+    val customGeoSphereUrlHint: String = t(
+        "Wenn gesetzt, wird diese URL statt des GeoSphere-Servers verwendet.",
+        "If set, this URL is used instead of the GeoSphere server."
+    )
+    val customGeoSphereUrlPlaceholder: String = "https://example.com/geosphere.json"
     val legalLinkURL: String = "https://www.arbeitsmediziner.wien"
     val legalLinkLabel: String = "arbeitsmediziner.wien"
     val onboardingWelcomeTitle: String = t("Willkommen bei Hitze-V", "Welcome to Hitze-V")

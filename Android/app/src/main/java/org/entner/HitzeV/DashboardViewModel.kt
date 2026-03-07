@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.entner.HitzeV.config.AppFeatureFlags
 import org.entner.HitzeV.data.AppStorage
 import org.entner.HitzeV.data.DashboardDataService
 import org.entner.HitzeV.data.FirebaseRegistrationManager
@@ -20,7 +21,7 @@ import org.entner.HitzeV.model.WorksiteSnapshot
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
     private val appStorage = AppStorage(application)
-    private val dashboardDataService = DashboardDataService()
+    private val dashboardDataService = DashboardDataService(appStorage)
     private val firebaseRegistrationManager = FirebaseRegistrationManager(application)
     private val nominatimSearchService = NominatimSearchService(application)
     private val subscriptionManager = SubscriptionManager(appStorage, dashboardDataService, firebaseRegistrationManager)
@@ -140,6 +141,12 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun setCustomGeoSphereUrl(url: String) {
+        viewModelScope.launch {
+            appStorage.saveCustomGeoSphereUrl(url)
+        }
+    }
+
     fun completeOnboarding(skipPushRegistration: Boolean) {
         viewModelScope.launch {
             _uiState.update { it.copy(isRequestingNotifications = !skipPushRegistration) }
@@ -159,16 +166,19 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 appStorage.worksites,
                 appStorage.appLanguage,
                 appStorage.appTheme,
-                appStorage.hasCompletedOnboarding
-            ) { worksites, appLanguage, appTheme, hasCompletedOnboarding ->
-                StoredState(worksites, appLanguage, appTheme, hasCompletedOnboarding)
+                appStorage.hasCompletedOnboarding,
+                appStorage.customGeoSphereUrl
+            ) { worksites, appLanguage, appTheme, hasCompletedOnboarding, customGeoSphereUrl ->
+                StoredState(worksites, appLanguage, appTheme, hasCompletedOnboarding, customGeoSphereUrl)
             }.collect { storedState ->
                 _uiState.update {
                     it.copy(
                         worksites = storedState.worksites,
                         appLanguage = storedState.appLanguage,
                         appTheme = storedState.appTheme,
-                        hasCompletedOnboarding = storedState.hasCompletedOnboarding
+                        hasCompletedOnboarding = storedState.hasCompletedOnboarding,
+                        showsCustomGeoSphereUrlSetting = AppFeatureFlags.enableCustomGeoSphereUrlSetting,
+                        customGeoSphereUrl = storedState.customGeoSphereUrl
                     )
                 }
             }
@@ -223,7 +233,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         val worksites: List<Worksite>,
         val appLanguage: AppLanguage,
         val appTheme: AppTheme,
-        val hasCompletedOnboarding: Boolean
+        val hasCompletedOnboarding: Boolean,
+        val customGeoSphereUrl: String
     )
 }
 
@@ -240,5 +251,7 @@ data class DashboardUiState(
     val appLanguage: AppLanguage = AppLanguage.SYSTEM,
     val appTheme: AppTheme = AppTheme.SYSTEM,
     val hasCompletedOnboarding: Boolean = false,
-    val isRequestingNotifications: Boolean = false
+    val isRequestingNotifications: Boolean = false,
+    val showsCustomGeoSphereUrlSetting: Boolean = false,
+    val customGeoSphereUrl: String = ""
 )

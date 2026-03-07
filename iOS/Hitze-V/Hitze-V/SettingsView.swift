@@ -22,6 +22,7 @@ struct SettingsView: View {
     
     @AppStorage("dashboard.language") private var languageRawValue = AppLanguage.system.rawValue
     @AppStorage("app.theme") private var themeRawValue = AppTheme.system.rawValue
+    @AppStorage("network.customGeoSphereUrl") private var customGeoSphereURL = ""
     
     private var selectedLanguage: AppLanguage {
         AppLanguage(rawValue: languageRawValue) ?? .system
@@ -56,6 +57,16 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.inline)
+                }
+
+                if AppFeatureFlags.enableCustomGeoSphereURLSetting {
+                    Section(header: Text(copy.developerSection), footer: Text(copy.customGeoSphereURLHint)) {
+                        TextField(copy.customGeoSphereURLLabel, text: $customGeoSphereURL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                            .textContentType(.URL)
+                    }
                 }
                 
                 Section(header: Text(copy.aboutSection)) {

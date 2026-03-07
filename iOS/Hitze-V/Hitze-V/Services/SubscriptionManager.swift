@@ -11,8 +11,7 @@ final class SubscriptionManager: ObservableObject {
     private let urlSession: URLSession
     private let userDefaults: UserDefaults
     private let userDefaultsKey = "subscription_manager.subscribedMunicipalityIDs"
-
-    private let geosphereBaseURL = "https://warnungen.zamg.at/wsapp/api/getWarningsForCoords"
+    private let defaultGeoSphereBaseURL = "https://warnungen.zamg.at/wsapp/api/getWarningsForCoords"
     private let networkTimeout: TimeInterval = 10
 
     init(urlSession: URLSession = .shared, userDefaults: UserDefaults = .standard) {
@@ -22,6 +21,18 @@ final class SubscriptionManager: ObservableObject {
         let persisted = userDefaults.stringArray(forKey: userDefaultsKey) ?? []
         self.subscribedMunicipalityIDs = Set(persisted.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
         self.lastError = nil
+    }
+
+    private var geosphereBaseURL: String {
+        if AppFeatureFlags.enableCustomGeoSphereURLSetting {
+            let configuredURL = userDefaults.string(forKey: "network.customGeoSphereUrl")?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !configuredURL.isEmpty {
+                return configuredURL
+            }
+        }
+
+        return defaultGeoSphereBaseURL
     }
 
     /// Synchronisiert ein einzelnes Arbeitsplatz-Topic anhand einer Koordinate.
