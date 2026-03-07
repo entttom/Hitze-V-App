@@ -408,6 +408,18 @@ private struct WorksiteCard: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.top, 4)
                         .padding(.bottom, 2)
+
+                        let warningLines = forecastWarningLines(snapshot.forecasts)
+                        if !warningLines.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(warningLines.enumerated()), id: \.offset) { _, line in
+                                    Label("\(line.dayLabel): \(line.timeText)", systemImage: "clock.fill")
+                                        .font(.system(.caption2, design: .rounded))
+                                        .foregroundStyle(detailColor)
+                                }
+                            }
+                            .padding(.top, 2)
+                        }
                     }
                 } else {
                     Label(copy.loading, systemImage: "hourglass")
@@ -511,6 +523,55 @@ private struct WorksiteCard: View {
 
         return String(format: "%.1f C", value)
     }
+
+    private func forecastWarningLines(_ forecasts: [DailyForecast]) -> [(dayLabel: String, timeText: String)] {
+        forecasts.compactMap { forecast in
+            guard let timeText = warningTimeText(for: forecast) else {
+                return nil
+            }
+
+            let dayLabel = Calendar.current.isDateInToday(forecast.date)
+                ? copy.todayTitle
+                : copy.weekdayShort(Calendar.current.component(.weekday, from: forecast.date))
+            return (dayLabel: dayLabel, timeText: timeText)
+        }
+    }
+
+    private func warningTimeText(for forecast: DailyForecast) -> String? {
+        guard !forecast.warningTimeRanges.isEmpty else {
+            return nil
+        }
+
+        let calendar = Self.viennaCalendar
+        let startOfDay = calendar.startOfDay(for: forecast.date)
+        guard let endOfDay = calendar.date(byAdding: DateComponents(day: 1, second: -1), to: startOfDay) else {
+            return nil
+        }
+
+        return forecast.warningTimeRanges
+            .map { range in
+                if range.start == startOfDay && range.end == endOfDay {
+                    return copy.warningAllDay
+                }
+
+                return "\(Self.timeFormatter.string(from: range.start))-\(Self.timeFormatter.string(from: range.end))"
+            }
+            .joined(separator: " · ")
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Europe/Vienna")
+        return formatter
+    }()
+
+    private static let viennaCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/Vienna") ?? .current
+        return calendar
+    }()
 }
 
 private struct DailyForecastItemView: View {
@@ -765,6 +826,7 @@ struct Copybook {
     var appearanceSection: String { t("Erscheinungsbild", "Appearance") }
     var aboutSection: String { t("Info & Rechtliches", "Info & Legal") }
     var dataSourceLine: String { t("Datenquelle: GeoSphere Austria", "Data source: GeoSphere Austria") }
+    var warningAllDay: String { t("Ganztägig", "All day") }
     var themeSystem: String { t("System", "System") }
     var themeLight: String { t("Hell", "Light") }
     var themeDark: String { t("Dunkel", "Dark") }

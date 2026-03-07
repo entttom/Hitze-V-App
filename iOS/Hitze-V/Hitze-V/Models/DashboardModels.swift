@@ -76,6 +76,12 @@ struct DailyForecast: Identifiable, Codable, Hashable {
     let severity: HazardSeverity
     let apparentTemperatureMax: Double?
     let uvIndexMax: Double?
+    let warningTimeRanges: [WarningTimeRange]
+}
+
+struct WarningTimeRange: Codable, Hashable {
+    let start: Date
+    let end: Date
 }
 
 struct WorksiteSnapshot {

@@ -64,7 +64,13 @@ data class DailyForecast(
     val date: LocalDate,
     val severity: HazardSeverity,
     val apparentTemperatureMax: Double?,
-    val uvIndexMax: Double?
+    val uvIndexMax: Double?,
+    val warningTimeRanges: List<WarningTimeRange> = emptyList()
+)
+
+data class WarningTimeRange(
+    val start: Instant,
+    val end: Instant
 )
 
 data class WorksiteSnapshot(

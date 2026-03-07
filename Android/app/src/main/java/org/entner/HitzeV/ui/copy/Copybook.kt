@@ -43,6 +43,7 @@ class Copybook(private val language: ResolvedLanguage) {
     val infoScreenTitle: String = t("Info", "Info")
     val infoButtonLabel: String = t("Info öffnen", "Open info")
     val notAvailableShort: String = t("n/v", "n/a")
+    val warningAllDay: String = t("Ganztägig", "All day")
     val appearanceSection: String = t("Erscheinungsbild", "Appearance")
     val aboutSection: String = t("Info & Rechtliches", "Info & Legal")
     val dataSourceLine: String = t("Datenquelle: GeoSphere Austria", "Data source: GeoSphere Austria")

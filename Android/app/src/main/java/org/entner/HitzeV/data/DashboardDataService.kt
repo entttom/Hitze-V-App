@@ -18,6 +18,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.entner.HitzeV.model.DailyForecast
 import org.entner.HitzeV.model.GeoCoordinate
 import org.entner.HitzeV.model.HazardSeverity
+import org.entner.HitzeV.model.WarningTimeRange
 import org.entner.HitzeV.model.WorksiteSnapshot
 import java.io.BufferedReader
 import java.net.HttpURLConnection
@@ -45,6 +46,7 @@ class DashboardDataService {
         val forecasts = (0..3).map { offset ->
             val date = today.plusDays(offset.toLong())
             val severity = highestHazardSeverity(date, geoResult.warnings)
+            val warningTimeRanges = warningTimeRangesForDate(date, geoResult.warnings)
             val uvIndex = meteoResult.daily.uvIndexMax.getOrNull(offset)
             val apparentTemperature = meteoResult.daily.apparentTemperatureMax.getOrNull(offset)
 
@@ -53,7 +55,8 @@ class DashboardDataService {
                 date = date,
                 severity = severity,
                 apparentTemperatureMax = apparentTemperature,
-                uvIndexMax = uvIndex
+                uvIndexMax = uvIndex,
+                warningTimeRanges = warningTimeRanges
             )
         }
 
@@ -189,6 +192,12 @@ class DashboardDataService {
     )
 
     companion object {
+        private data class DailyHeatWarning(
+            val level: Int,
+            val start: Instant?,
+            val end: Instant?
+        )
+
         internal fun parseGeosphereTimestamp(value: String?): Instant? {
             val trimmed = value?.trim().orEmpty()
             if (trimmed.isEmpty()) return null
@@ -214,33 +223,75 @@ class DashboardDataService {
             warnings: List<GeoSphereWarning>,
             zoneId: ZoneId = ZoneId.of("Europe/Vienna")
         ): HazardSeverity {
-            var highestHeat = 0
+            val highestHeat = heatWarningsForDate(targetDate, warnings, zoneId)
+                .maxOfOrNull(DailyHeatWarning::level) ?: 0
+            return if (highestHeat > 0) HazardSeverity.heat(highestHeat) else HazardSeverity.NONE
+        }
+
+        internal fun warningTimeRangesForDate(
+            targetDate: LocalDate,
+            warnings: List<GeoSphereWarning>,
+            zoneId: ZoneId = ZoneId.of("Europe/Vienna")
+        ): List<WarningTimeRange> {
             val startOfDay = targetDate.atStartOfDay(zoneId).toInstant()
             val endOfDay = targetDate.plusDays(1).atStartOfDay(zoneId).minusNanos(1).toInstant()
 
-            warnings.forEach { warning ->
+            return heatWarningsForDate(targetDate, warnings, zoneId)
+                .map { warning ->
+                    WarningTimeRange(
+                        start = maxOf(warning.start ?: startOfDay, startOfDay),
+                        end = minOf(warning.end ?: endOfDay, endOfDay)
+                    )
+                }
+                .sortedBy(WarningTimeRange::start)
+                .fold(mutableListOf()) { merged, range ->
+                    val lastRange = merged.lastOrNull()
+                    if (lastRange == null || range.start.isAfter(lastRange.end)) {
+                        merged += range
+                    } else {
+                        merged[merged.lastIndex] = lastRange.copy(end = maxOf(lastRange.end, range.end))
+                    }
+                    merged
+                }
+        }
+
+        private fun heatWarningsForDate(
+            targetDate: LocalDate,
+            warnings: List<GeoSphereWarning>,
+            zoneId: ZoneId
+        ): List<DailyHeatWarning> {
+            val startOfDay = targetDate.atStartOfDay(zoneId).toInstant()
+            val endOfDay = targetDate.plusDays(1).atStartOfDay(zoneId).minusNanos(1).toInstant()
+
+            return warnings.mapNotNull { warning ->
                 val startDate = parseGeosphereTimestamp(warning.start)
                 val endDate = parseGeosphereTimestamp(warning.end)
-                val intersects = if (startDate != null && endDate != null) {
-                    !(endDate.isBefore(startOfDay) || startDate.isAfter(endOfDay))
-                } else {
-                    true
+                val intersects = when {
+                    startDate != null && endDate != null -> !(endDate.isBefore(startOfDay) || startDate.isAfter(endOfDay))
+                    startDate != null -> !startDate.isAfter(endOfDay)
+                    endDate != null -> !endDate.isBefore(startOfDay)
+                    else -> true
                 }
 
-                if (!intersects) return@forEach
-
-                val type = warning.warningTypeId
-                if (type == 6) {
-                    highestHeat = maxOf(highestHeat, warning.warningLevel)
-                } else if (type == null) {
-                    val textualType = warning.warningTypeText?.lowercase(Locale.ROOT).orEmpty()
-                    if (textualType.contains("hitze") || textualType.contains("heat")) {
-                        highestHeat = maxOf(highestHeat, warning.warningLevel)
-                    }
+                if (!intersects || !isHeatWarning(warning)) {
+                    null
+                } else {
+                    DailyHeatWarning(
+                        level = warning.warningLevel,
+                        start = startDate,
+                        end = endDate
+                    )
                 }
             }
+        }
 
-            return if (highestHeat > 0) HazardSeverity.heat(highestHeat) else HazardSeverity.NONE
+        private fun isHeatWarning(warning: GeoSphereWarning): Boolean {
+            val type = warning.warningTypeId
+            if (type == 6) return true
+            if (type != null) return false
+
+            val textualType = warning.warningTypeText?.lowercase(Locale.ROOT).orEmpty()
+            return textualType.contains("hitze") || textualType.contains("heat")
         }
     }
 }

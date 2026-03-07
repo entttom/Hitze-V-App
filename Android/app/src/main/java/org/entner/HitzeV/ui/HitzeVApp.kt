@@ -49,6 +49,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AddCircle
+import androidx.compose.material.icons.rounded.AccessTime
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Info
@@ -114,6 +115,7 @@ import org.entner.HitzeV.R
 import org.entner.HitzeV.model.AddressSearchResult
 import org.entner.HitzeV.model.AppLanguage
 import org.entner.HitzeV.model.AppTheme
+import org.entner.HitzeV.model.DailyForecast
 import org.entner.HitzeV.model.HazardSeverity
 import org.entner.HitzeV.model.Worksite
 import org.entner.HitzeV.model.WorksiteSnapshot
@@ -129,6 +131,8 @@ import org.entner.HitzeV.ui.theme.SkyBlue
 import org.entner.HitzeV.ui.theme.SurfaceDark
 import org.entner.HitzeV.ui.theme.SurfaceLight
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Calendar
 
 private object Routes {
@@ -137,6 +141,9 @@ private object Routes {
     const val Settings = "settings"
     const val Info = "info"
 }
+
+private val warningTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+private val viennaZoneId: ZoneId = ZoneId.of("Europe/Vienna")
 
 @Composable
 fun HitzeVApp(viewModel: DashboardViewModel = viewModel()) {
@@ -749,6 +756,19 @@ private fun WorksiteCard(
                                     }
                                 }
                             }
+
+                            val warningLines = snapshot.forecasts.mapNotNull { forecast ->
+                                formatWarningTimeRanges(copy, forecast)?.let { timeText ->
+                                    "${copy.todayTitle(forecast.date)}: $timeText"
+                                }
+                            }
+                            if (warningLines.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    warningLines.forEach { line ->
+                                        MiniFact(Icons.Rounded.AccessTime, line, worksiteDetailColor(severity))
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -836,6 +856,23 @@ private fun DailyForecastChip(
                 style = MaterialTheme.typography.labelLarge,
                 color = foreground
             )
+        }
+    }
+}
+
+private fun formatWarningTimeRanges(copy: Copybook, forecast: DailyForecast): String? {
+    if (forecast.warningTimeRanges.isEmpty()) return null
+
+    val startOfDay = forecast.date.atStartOfDay(viennaZoneId).toInstant()
+    val endOfDay = forecast.date.plusDays(1).atStartOfDay(viennaZoneId).minusNanos(1).toInstant()
+
+    return forecast.warningTimeRanges.joinToString(" · ") { range ->
+        if (range.start == startOfDay && range.end == endOfDay) {
+            copy.warningAllDay
+        } else {
+            val startText = warningTimeFormatter.format(range.start.atZone(viennaZoneId))
+            val endText = warningTimeFormatter.format(range.end.atZone(viennaZoneId))
+            "$startText-$endText"
         }
     }
 }

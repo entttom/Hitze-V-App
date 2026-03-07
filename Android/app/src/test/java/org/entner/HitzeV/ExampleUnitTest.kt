@@ -6,9 +6,11 @@ import org.entner.HitzeV.model.ResolvedLanguage
 import org.entner.HitzeV.ui.copy.Copybook
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 
 class ExampleUnitTest {
     @Test
@@ -42,6 +44,37 @@ class ExampleUnitTest {
         )
 
         assertEquals(HazardSeverity.HEAT_RED, severity)
+    }
+
+    @Test
+    fun warningTimeRangesForDate_clipsAndMergesRangesWithinTheDay() {
+        val zoneId = ZoneId.of("Europe/Vienna")
+        val targetDate = LocalDate.parse("2026-07-10")
+
+        val ranges = DashboardDataService.warningTimeRangesForDate(
+            targetDate = targetDate,
+            warnings = listOf(
+                DashboardDataService.GeoSphereWarning(
+                    warningTypeId = 6,
+                    warningLevel = 1,
+                    warningTypeText = "Hitze",
+                    start = "2026-07-09T22:00:00Z",
+                    end = "2026-07-10T08:00:00Z"
+                ),
+                DashboardDataService.GeoSphereWarning(
+                    warningTypeId = 6,
+                    warningLevel = 2,
+                    warningTypeText = "Hitze",
+                    start = "2026-07-10T07:30:00Z",
+                    end = "2026-07-10T10:00:00Z"
+                )
+            ),
+            zoneId = zoneId
+        )
+
+        assertEquals(1, ranges.size)
+        assertEquals(targetDate.atStartOfDay(zoneId).toInstant(), ranges.first().start)
+        assertTrue(ranges.first().end.isAfter(ranges.first().start))
     }
 
     @Test

@@ -5,6 +5,7 @@ final class DashboardDataService {
     private let urlSession: URLSession
     private let geosphereBaseURL = "https://warnungen.zamg.at/wsapp/api/getWarningsForCoords"
     private let openMeteoBaseURL = "https://api.open-meteo.com/v1/forecast"
+    private let viennaTimeZone = TimeZone(identifier: "Europe/Vienna") ?? .current
 
     init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
@@ -18,7 +19,8 @@ final class DashboardDataService {
         let meteoResult = try await meteo
 
         let now = Date()
-        let calendar = Calendar(identifier: .gregorian)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = viennaTimeZone
         var forecasts: [DailyForecast] = []
         
         let targetDates = (0..<4).compactMap { calendar.date(byAdding: .day, value: $0, to: now) }
@@ -33,12 +35,14 @@ final class DashboardDataService {
             }
             
             let severity = highestHazardSeverity(for: targetDate, warnings: geoResult.warnings)
+            let warningTimeRanges = warningTimeRanges(for: targetDate, warnings: geoResult.warnings)
             
             forecasts.append(DailyForecast(
                 date: targetDate,
                 severity: severity,
                 apparentTemperatureMax: tempMax,
-                uvIndexMax: uvMax
+                uvIndexMax: uvMax,
+                warningTimeRanges: warningTimeRanges
             ))
         }
 
@@ -121,65 +125,99 @@ final class DashboardDataService {
     }
 
     private func highestHazardSeverity(for targetDate: Date, warnings: [GeoSphereWarning]) -> HazardSeverity {
-        var highestHeat = 0
-        let calendar = Calendar(identifier: .gregorian)
-        
-        for warning in warnings {
-            let properties = warning.properties
-            
-            // Check if warning falls into the target targetDate
-            var isActiveOnTargetDate = true // Fallback to true if we cannot parse
-            
-            if let startStr = properties.start, let endStr = properties.end {
-                // If the strings are not nil, try to parse
-                let startDate = parseGeosphereTimestamp(startStr)
-                let endDate = parseGeosphereTimestamp(endStr)
-                
-                if let startDate = startDate, let endDate = endDate {
-                    // Start of target day
-                    let startOfTargetDay = calendar.startOfDay(for: targetDate)
-                    // End of target day
-                    guard let endOfTargetDay = calendar.date(byAdding: DateComponents(day: 1, second: -1), to: startOfTargetDay) else {
-                        continue
-                    }
-                    
-                    // Check intersection
-                    if endDate < startOfTargetDay || startDate > endOfTargetDay {
-                        isActiveOnTargetDate = false
-                    }
-                }
-            }
-            
-            if !isActiveOnTargetDate {
-                continue
-            }
-            
-            guard let type = properties.wtype ?? properties.warntypid ?? properties.rawinfo?.wtype ?? properties.rawfinfo?.wtype else {
-                
-                // Fallback for textual matching if wtype is missing
-                if let textualType = properties.warningType?.lowercased() {
-                    let level = properties.warnstufeid ?? properties.wlevel ?? properties.rawinfo?.wlevel ?? properties.rawfinfo?.wlevel ?? 0
-                    if textualType.contains("hitze") || textualType.contains("heat") {
-                        highestHeat = max(highestHeat, level)
-                    }
-                }
-                continue
-            }
-            
-            let level = properties.warnstufeid ?? properties.wlevel ?? properties.rawinfo?.wlevel ?? properties.rawfinfo?.wlevel ?? 0
-            
-            // GeoSphere API: 6 = heat, 7 = cold (cold intentionally ignored here)
-            if type == 6 {
-                highestHeat = max(highestHeat, level)
-            }
-        }
-        
+        let highestHeat = heatWarnings(for: targetDate, warnings: warnings)
+            .map(\.level)
+            .max() ?? 0
+
         if highestHeat > 0 {
             return HazardSeverity.heat(from: highestHeat)
         }
         
         return .none
-    } 
+    }
+
+    private func warningTimeRanges(for targetDate: Date, warnings: [GeoSphereWarning]) -> [WarningTimeRange] {
+        let calendar = gregorianViennaCalendar()
+        let startOfDay = calendar.startOfDay(for: targetDate)
+        guard let endOfDay = calendar.date(byAdding: DateComponents(day: 1, second: -1), to: startOfDay) else {
+            return []
+        }
+
+        return heatWarnings(for: targetDate, warnings: warnings)
+            .map { warning in
+                WarningTimeRange(
+                    start: max(warning.start ?? startOfDay, startOfDay),
+                    end: min(warning.end ?? endOfDay, endOfDay)
+                )
+            }
+            .sorted { $0.start < $1.start }
+            .reduce(into: [WarningTimeRange]()) { merged, range in
+                guard let lastRange = merged.last else {
+                    merged.append(range)
+                    return
+                }
+
+                if range.start > lastRange.end {
+                    merged.append(range)
+                } else {
+                    merged[merged.count - 1] = WarningTimeRange(
+                        start: lastRange.start,
+                        end: max(lastRange.end, range.end)
+                    )
+                }
+            }
+    }
+
+    private func heatWarnings(for targetDate: Date, warnings: [GeoSphereWarning]) -> [DailyHeatWarning] {
+        let calendar = gregorianViennaCalendar()
+        let startOfTargetDay = calendar.startOfDay(for: targetDate)
+        guard let endOfTargetDay = calendar.date(byAdding: DateComponents(day: 1, second: -1), to: startOfTargetDay) else {
+            return []
+        }
+
+        return warnings.compactMap { warning in
+            let properties = warning.properties
+            let startDate = parseGeosphereTimestamp(properties.start)
+            let endDate = parseGeosphereTimestamp(properties.end)
+
+            let isActiveOnTargetDate: Bool
+            switch (startDate, endDate) {
+            case let (startDate?, endDate?):
+                isActiveOnTargetDate = !(endDate < startOfTargetDay || startDate > endOfTargetDay)
+            case let (startDate?, nil):
+                isActiveOnTargetDate = startDate <= endOfTargetDay
+            case let (nil, endDate?):
+                isActiveOnTargetDate = endDate >= startOfTargetDay
+            case (nil, nil):
+                isActiveOnTargetDate = true
+            }
+
+            guard isActiveOnTargetDate, isHeatWarning(properties) else {
+                return nil
+            }
+
+            let level = properties.warnstufeid ?? properties.wlevel ?? properties.rawinfo?.wlevel ?? properties.rawfinfo?.wlevel ?? 0
+            return DailyHeatWarning(level: level, start: startDate, end: endDate)
+        }
+    }
+
+    private func isHeatWarning(_ properties: GeoSphereWarningProperties) -> Bool {
+        if let type = properties.wtype ?? properties.warntypid ?? properties.rawinfo?.wtype ?? properties.rawfinfo?.wtype {
+            return type == 6
+        }
+
+        guard let textualType = properties.warningType?.lowercased() else {
+            return false
+        }
+
+        return textualType.contains("hitze") || textualType.contains("heat")
+    }
+
+    private func gregorianViennaCalendar() -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = viennaTimeZone
+        return calendar
+    }
 
     private func fetchOpenMeteo(for coordinate: CLLocationCoordinate2D) async throws -> OpenMeteoForecastResponse {
         var components = URLComponents(string: openMeteoBaseURL)
@@ -216,6 +254,12 @@ final class DashboardDataService {
             throw DashboardDataError.network(message: error.localizedDescription)
         }
     }
+}
+
+private struct DailyHeatWarning {
+    let level: Int
+    let start: Date?
+    let end: Date?
 }
 
 private struct GeoSphereResolvedState {
