@@ -49,13 +49,13 @@ const messaging_1 = require("firebase-admin/messaging");
 const redis_1 = require("redis");
 const XLSX = __importStar(require("xlsx"));
 const GEOSPHERE_WARNSTATUS_URL = "https://warnungen.zamg.at/wsapp/api/getWarnstatus";
-const GEOSPHERE_STATIC_WARNSTATUS_URL = "https://raw.githubusercontent.com/entttom/Hitze-V-App/main/backend/example_response.json";
 const REDIS_SIGNATURE_KEY = "hitze:v1:signatures";
 const REDIS_SEND_META_KEY = "hitze:v1:send_meta";
 const SEND_META_RETENTION_DAYS = 7;
 const WARNING_TYPE_HEAT = 6;
 const WARNING_TYPE_COLD = 7;
 const MUNICIPALITY_LIST_FILE = "gemliste_knz.xls";
+const STATIC_GEOSPHERE_RESPONSE_FILE = "example_response.json";
 const DEFAULT_MIN_WARNING_LEVEL = 2;
 const GEO_FETCH_TIMEOUT_MS = 10_000;
 const GEO_FETCH_RETRIES = 2;
@@ -503,8 +503,29 @@ function isEnvFlagEnabled(value) {
 function useStaticGeoSphereResponse() {
     return isEnvFlagEnabled(process.env.HITZE_USE_STATIC_GEOSPHERE_RESPONSE);
 }
-function getGeoSphereWarnstatusUrl() {
-    return useStaticGeoSphereResponse() ? GEOSPHERE_STATIC_WARNSTATUS_URL : GEOSPHERE_WARNSTATUS_URL;
+function getStaticGeoSphereUrl() {
+    return asString(process.env.HITZE_STATIC_GEOSPHERE_URL);
+}
+function staticGeoSphereResponsePaths() {
+    return [
+        node_path_1.default.resolve(process.cwd(), STATIC_GEOSPHERE_RESPONSE_FILE),
+        node_path_1.default.resolve(process.cwd(), "backend", STATIC_GEOSPHERE_RESPONSE_FILE),
+        node_path_1.default.resolve(__dirname, "..", "..", "..", STATIC_GEOSPHERE_RESPONSE_FILE),
+    ];
+}
+function loadStaticGeoSpherePayload() {
+    for (const candidatePath of staticGeoSphereResponsePaths()) {
+        if (!(0, node_fs_1.existsSync)(candidatePath)) {
+            continue;
+        }
+        try {
+            return JSON.parse((0, node_fs_1.readFileSync)(candidatePath, "utf8"));
+        }
+        catch (error) {
+            throw new AppError(500, "STATIC_GEOSPHERE_PAYLOAD_INVALID", `Static GeoSphere payload at ${candidatePath} is invalid: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    throw new AppError(500, "STATIC_GEOSPHERE_PAYLOAD_MISSING", `Static GeoSphere payload file not found. Checked: ${staticGeoSphereResponsePaths().join(", ")}`);
 }
 function sleep(ms) {
     return new Promise((resolve) => {
@@ -567,7 +588,14 @@ function extractGeoSphereFeatures(payload) {
     return null;
 }
 async function fetchGeoSphereWarnings(requestId, minWarningLevel) {
-    const payload = await fetchJsonWithRetry(getGeoSphereWarnstatusUrl(), requestId);
+    let payload;
+    if (useStaticGeoSphereResponse()) {
+        const staticUrl = getStaticGeoSphereUrl();
+        payload = staticUrl ? await fetchJsonWithRetry(staticUrl, requestId) : loadStaticGeoSpherePayload();
+    }
+    else {
+        payload = await fetchJsonWithRetry(GEOSPHERE_WARNSTATUS_URL, requestId);
+    }
     const features = extractGeoSphereFeatures(payload);
     if (!features) {
         throw new AppError(502, "GEOSPHERE_SCHEMA_INVALID", "GeoSphere payload is missing a valid features array.");

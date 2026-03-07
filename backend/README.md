@@ -40,7 +40,8 @@ curl -X POST http://localhost:3000/test/push \
 Optional:
 
 - `HITZE_MIN_LEVEL` (default `2`)
-- `HITZE_USE_STATIC_GEOSPHERE_RESPONSE` (`true`/`1`/`yes`/`on` loads `backend/example_response.json` via GitHub Raw instead of the GeoSphere API)
+- `HITZE_USE_STATIC_GEOSPHERE_RESPONSE` (`true`/`1`/`yes`/`on` enables a static test payload instead of the GeoSphere API)
+- `HITZE_STATIC_GEOSPHERE_URL` (optional URL for the static test payload, for example `https://raw.githubusercontent.com/entttom/Hitze-V-App/main/backend/example_response.json`; if omitted, the local `backend/example_response.json` is used)
 - `CRON_SECRET`
 - `develop` or `DEVELOP` (`true`/`1`/`yes`/`on` enables the test routes and test website)
 - `PORT`
