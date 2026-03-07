@@ -49,6 +49,7 @@ const messaging_1 = require("firebase-admin/messaging");
 const redis_1 = require("redis");
 const XLSX = __importStar(require("xlsx"));
 const GEOSPHERE_WARNSTATUS_URL = "https://warnungen.zamg.at/wsapp/api/getWarnstatus";
+const GEOSPHERE_STATIC_WARNSTATUS_URL = "https://raw.githubusercontent.com/entttom/Hitze-V-App/main/backend/example_response.json";
 const REDIS_SIGNATURE_KEY = "hitze:v1:signatures";
 const REDIS_SEND_META_KEY = "hitze:v1:send_meta";
 const SEND_META_RETENTION_DAYS = 7;
@@ -340,19 +341,72 @@ function formatPushTime(isoValue) {
         hour12: false,
     }).format(new Date(parsed));
 }
+function formatPushClockTime(isoValue) {
+    if (!isoValue) {
+        return "";
+    }
+    const parsed = Date.parse(isoValue);
+    if (Number.isNaN(parsed)) {
+        return "";
+    }
+    return new Intl.DateTimeFormat("de-AT", {
+        timeZone: "Europe/Vienna",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: false,
+    }).format(new Date(parsed));
+}
+function dayKeyForIsoValue(isoValue) {
+    if (!isoValue) {
+        return "";
+    }
+    const parsed = Date.parse(isoValue);
+    if (Number.isNaN(parsed)) {
+        return "";
+    }
+    return currentDayKeyVienna(parsed);
+}
 function buildTimeWindowText(timeWindow) {
     const startText = formatPushTime(timeWindow.start);
     const endText = formatPushTime(timeWindow.end);
+    const startClockText = formatPushClockTime(timeWindow.start);
+    const endClockText = formatPushClockTime(timeWindow.end);
+    const todayDayKey = currentDayKeyVienna();
+    const startDayKey = dayKeyForIsoValue(timeWindow.start);
+    const endDayKey = dayKeyForIsoValue(timeWindow.end);
     if (startText && endText) {
+        if (startClockText &&
+            endClockText &&
+            startDayKey === todayDayKey &&
+            endDayKey === todayDayKey) {
+            return `Heute von ${startClockText}-${endClockText} Uhr`;
+        }
         return `Gueltig: ${startText} - ${endText}`;
     }
     if (startText) {
+        if (startClockText && startDayKey === todayDayKey) {
+            return `Heute ab ${startClockText} Uhr`;
+        }
         return `Ab: ${startText}`;
     }
     if (endText) {
+        if (endClockText && endDayKey === todayDayKey) {
+            return `Heute bis ${endClockText} Uhr`;
+        }
         return `Bis: ${endText}`;
     }
     return "";
+}
+function buildTimeWindowChangeText(previousTimeWindow, currentTimeWindow) {
+    const currentText = buildTimeWindowText(currentTimeWindow);
+    if (!currentText) {
+        return "";
+    }
+    const previousText = previousTimeWindow ? buildTimeWindowText(previousTimeWindow) : "";
+    if (previousText) {
+        return `Zeitfenster aktualisiert: von ${previousText} auf ${currentText}.`;
+    }
+    return `Aktualisiertes Zeitfenster: ${currentText}.`;
 }
 function municipalityListPaths() {
     return [
@@ -427,10 +481,6 @@ function municipalityDisplayName(municipalityId) {
     if (name) {
         return name;
     }
-    // GeoSphere IDs with a leading 9 map to Vienna.
-    if (municipalityId.startsWith("9")) {
-        return "Wien";
-    }
     return `Gemeinde ${municipalityId}`;
 }
 function getMinWarningLevel() {
@@ -443,6 +493,18 @@ function getMinWarningLevel() {
         return DEFAULT_MIN_WARNING_LEVEL;
     }
     return value;
+}
+function isEnvFlagEnabled(value) {
+    if (!value) {
+        return false;
+    }
+    return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+function useStaticGeoSphereResponse() {
+    return isEnvFlagEnabled(process.env.HITZE_USE_STATIC_GEOSPHERE_RESPONSE);
+}
+function getGeoSphereWarnstatusUrl() {
+    return useStaticGeoSphereResponse() ? GEOSPHERE_STATIC_WARNSTATUS_URL : GEOSPHERE_WARNSTATUS_URL;
 }
 function sleep(ms) {
     return new Promise((resolve) => {
@@ -487,13 +549,31 @@ async function fetchJsonWithRetry(url, requestId) {
     }
     throw new AppError(502, "GEOSPHERE_FETCH_FAILED", `GeoSphere fetch failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
+function extractGeoSphereFeatures(payload) {
+    if (isRecord(payload) && Array.isArray(payload.features)) {
+        return payload.features;
+    }
+    if (isRecord(payload)) {
+        for (const nestedValue of Object.values(payload)) {
+            if (isRecord(nestedValue) && Array.isArray(nestedValue.features)) {
+                return nestedValue.features;
+            }
+            const wrappedValue = isRecord(nestedValue) ? nestedValue.value : null;
+            if (isRecord(wrappedValue) && Array.isArray(wrappedValue.features)) {
+                return wrappedValue.features;
+            }
+        }
+    }
+    return null;
+}
 async function fetchGeoSphereWarnings(requestId, minWarningLevel) {
-    const payload = await fetchJsonWithRetry(GEOSPHERE_WARNSTATUS_URL, requestId);
-    if (!isRecord(payload) || !Array.isArray(payload.features)) {
+    const payload = await fetchJsonWithRetry(getGeoSphereWarnstatusUrl(), requestId);
+    const features = extractGeoSphereFeatures(payload);
+    if (!features) {
         throw new AppError(502, "GEOSPHERE_SCHEMA_INVALID", "GeoSphere payload is missing a valid features array.");
     }
     const result = [];
-    payload.features.forEach((feature, index) => {
+    features.forEach((feature, index) => {
         const normalized = normalizeWarning(feature, index, minWarningLevel);
         if (normalized) {
             result.push(normalized);
@@ -681,21 +761,32 @@ function dayKeyDaysAgoVienna(daysAgo) {
     const millisPerDay = 24 * 60 * 60 * 1000;
     return currentDayKeyVienna(Date.now() - daysAgo * millisPerDay);
 }
-function pushContentForWarning(aggregate, timeWindow) {
+function pushContentForWarning(aggregate, timeWindow, previousTimeWindow = null, timeWindowChanged = false) {
     const name = municipalityDisplayName(aggregate.municipalityId);
     const timeWindowText = buildTimeWindowText(timeWindow);
+    const timeWindowChangeText = timeWindowChanged
+        ? buildTimeWindowChangeText(previousTimeWindow, timeWindow)
+        : "";
     if (aggregate.kind === "cold") {
         const bodyBase = `Achtung extreme Kälte in ${name}, Kälteschutz-Ausrüstung tragen.`;
         return {
             title: "Kälte-Warnung",
-            body: timeWindowText ? `${bodyBase} ${timeWindowText}` : bodyBase,
+            body: timeWindowChangeText
+                ? `${bodyBase} ${timeWindowChangeText}`
+                : timeWindowText
+                    ? `${bodyBase} ${timeWindowText}`
+                    : bodyBase,
             collapsePrefix: "kaelte",
         };
     }
     const bodyBase = `In ${name} wurde Warnstufe ${aggregate.maxLevel} erreicht. Hitzeschutzmaßnahmen nach Hitze-V umsetzen.`;
     return {
         title: "Hitze-Warnung",
-        body: timeWindowText ? `${bodyBase} ${timeWindowText}` : bodyBase,
+        body: timeWindowChangeText
+            ? `${bodyBase} ${timeWindowChangeText}`
+            : timeWindowText
+                ? `${bodyBase} ${timeWindowText}`
+                : bodyBase,
         collapsePrefix: "hitze",
     };
 }
@@ -796,11 +887,11 @@ async function sendTestPushToToken(input) {
     });
     return { messageId, token };
 }
-async function sendMunicipalityWarning(messaging, aggregate) {
+async function sendMunicipalityWarning(messaging, aggregate, previousTimeWindow = null, timeWindowChanged = false) {
     const topic = topicForMunicipality(aggregate.municipalityId);
     const warningIds = Array.from(aggregate.warningIds).sort();
     const timeWindow = aggregateTimeWindow(aggregate);
-    const content = pushContentForWarning(aggregate, timeWindow);
+    const content = pushContentForWarning(aggregate, timeWindow, previousTimeWindow, timeWindowChanged);
     const collapseId = `${content.collapsePrefix}-${aggregate.municipalityId}`;
     const warningStartLocal = formatPushTime(timeWindow.start);
     const warningEndLocal = formatPushTime(timeWindow.end);
@@ -899,21 +990,31 @@ async function executeHitzeCron(method) {
             const beginChanged = (previousMetadata?.start ?? "") !== currentStart;
             const endChanged = (previousMetadata?.end ?? "") !== currentEnd;
             if (!sentToday || beginChanged || endChanged) {
-                sendCandidates.push(aggregate);
+                sendCandidates.push({
+                    aggregate,
+                    previousTimeWindow: previousMetadata
+                        ? {
+                            start: previousMetadata.start,
+                            end: previousMetadata.end,
+                        }
+                        : null,
+                    timeWindowChanged: beginChanged || endChanged,
+                });
                 continue;
             }
             skippedRateLimitedKeys.add(key);
         }
         const messaging = getFirebaseMessagingClient();
-        const sendResults = await Promise.allSettled(sendCandidates.map(async (aggregate) => {
-            await sendMunicipalityWarning(messaging, aggregate);
-            return aggregate.municipalityId;
+        const sendResults = await Promise.allSettled(sendCandidates.map(async (candidate) => {
+            await sendMunicipalityWarning(messaging, candidate.aggregate, candidate.previousTimeWindow, candidate.timeWindowChanged);
+            return candidate.aggregate.municipalityId;
         }));
         const signaturesToPersist = {};
         const sendMetadataToPersist = {};
         const failedMunicipalities = [];
         sendResults.forEach((result, index) => {
-            const aggregate = sendCandidates[index];
+            const candidate = sendCandidates[index];
+            const aggregate = candidate?.aggregate;
             const key = aggregate ? aggregateStateKey(aggregate) : null;
             if (!aggregate || !key) {
                 return;

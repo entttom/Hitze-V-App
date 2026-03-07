@@ -129,6 +129,7 @@ Wichtige Variablen:
 - `PORT`: HTTP-Port des Services, lokal standardmaessig `3000`
 - `CRON_SECRET`: Bearer-Token fuer den geschuetzten Cron-POST-Endpunkt
 - `HITZE_MIN_LEVEL`: Mindestwarnstufe fuer den Versand, Standard `2`
+- `HITZE_USE_STATIC_GEOSPHERE_RESPONSE`: nutzt fuer Tests die statische Datei `backend/example_response.json` ueber GitHub Raw statt der GeoSphere-API
 - `FIREBASE_SERVICE_ACCOUNT`: kompletter Firebase-Service-Account als JSON-String
 - `REDIS_URL`: Verbindungszeichenfolge zur Redis-Instanz
 - `DEVELOP` oder `develop`: aktiviert lokale Test-Endpunkte und Testoberflaeche
@@ -139,6 +140,7 @@ Beispiel:
 PORT=3000
 CRON_SECRET=replace-with-strong-secret
 HITZE_MIN_LEVEL=2
+HITZE_USE_STATIC_GEOSPHERE_RESPONSE=false
 FIREBASE_SERVICE_ACCOUNT={"type":"service_account","project_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n","client_email":"..."}
 REDIS_URL=redis://default:<password>@<host>:6379
 DEVELOP=true

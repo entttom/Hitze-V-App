@@ -40,6 +40,7 @@ curl -X POST http://localhost:3000/test/push \
 Optional:
 
 - `HITZE_MIN_LEVEL` (default `2`)
+- `HITZE_USE_STATIC_GEOSPHERE_RESPONSE` (`true`/`1`/`yes`/`on` loads `backend/example_response.json` via GitHub Raw instead of the GeoSphere API)
 - `CRON_SECRET`
 - `develop` or `DEVELOP` (`true`/`1`/`yes`/`on` enables the test routes and test website)
 - `PORT`

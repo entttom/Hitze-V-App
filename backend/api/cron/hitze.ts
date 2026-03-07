@@ -7,6 +7,8 @@ import { createClient, type RedisClientType } from "redis";
 import * as XLSX from "xlsx";
 
 const GEOSPHERE_WARNSTATUS_URL = "https://warnungen.zamg.at/wsapp/api/getWarnstatus";
+const GEOSPHERE_STATIC_WARNSTATUS_URL =
+  "https://raw.githubusercontent.com/entttom/Hitze-V-App/main/backend/example_response.json";
 const REDIS_SIGNATURE_KEY = "hitze:v1:signatures";
 const REDIS_SEND_META_KEY = "hitze:v1:send_meta";
 const SEND_META_RETENTION_DAYS = 7;
@@ -59,6 +61,17 @@ interface AggregateSendMetadata {
   dayKey: string;
   start: string;
   end: string;
+}
+
+interface TimeWindow {
+  start: string;
+  end: string;
+}
+
+interface SendCandidate {
+  aggregate: MunicipalityAggregate;
+  previousTimeWindow: TimeWindow | null;
+  timeWindowChanged: boolean;
 }
 
 class AppError extends Error {
@@ -387,7 +400,7 @@ function buildMunicipalitySignature(aggregate: MunicipalityAggregate): string {
   return createHash("sha256").update(payload).digest("hex");
 }
 
-function aggregateTimeWindow(aggregate: MunicipalityAggregate): { start: string; end: string } {
+function aggregateTimeWindow(aggregate: MunicipalityAggregate): TimeWindow {
   const starts = Array.from(aggregate.starts).filter((value) => value.length > 0).sort();
   const ends = Array.from(aggregate.ends).filter((value) => value.length > 0).sort();
 
@@ -418,23 +431,90 @@ function formatPushTime(isoValue: string): string {
   }).format(new Date(parsed));
 }
 
-function buildTimeWindowText(timeWindow: { start: string; end: string }): string {
+function formatPushClockTime(isoValue: string): string {
+  if (!isoValue) {
+    return "";
+  }
+
+  const parsed = Date.parse(isoValue);
+  if (Number.isNaN(parsed)) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat("de-AT", {
+    timeZone: "Europe/Vienna",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(parsed));
+}
+
+function dayKeyForIsoValue(isoValue: string): string {
+  if (!isoValue) {
+    return "";
+  }
+
+  const parsed = Date.parse(isoValue);
+  if (Number.isNaN(parsed)) {
+    return "";
+  }
+
+  return currentDayKeyVienna(parsed);
+}
+
+function buildTimeWindowText(timeWindow: TimeWindow): string {
   const startText = formatPushTime(timeWindow.start);
   const endText = formatPushTime(timeWindow.end);
+  const startClockText = formatPushClockTime(timeWindow.start);
+  const endClockText = formatPushClockTime(timeWindow.end);
+  const todayDayKey = currentDayKeyVienna();
+  const startDayKey = dayKeyForIsoValue(timeWindow.start);
+  const endDayKey = dayKeyForIsoValue(timeWindow.end);
 
   if (startText && endText) {
+    if (
+      startClockText &&
+      endClockText &&
+      startDayKey === todayDayKey &&
+      endDayKey === todayDayKey
+    ) {
+      return `Heute von ${startClockText}-${endClockText} Uhr`;
+    }
+
     return `Gueltig: ${startText} - ${endText}`;
   }
 
   if (startText) {
+    if (startClockText && startDayKey === todayDayKey) {
+      return `Heute ab ${startClockText} Uhr`;
+    }
+
     return `Ab: ${startText}`;
   }
 
   if (endText) {
+    if (endClockText && endDayKey === todayDayKey) {
+      return `Heute bis ${endClockText} Uhr`;
+    }
+
     return `Bis: ${endText}`;
   }
 
   return "";
+}
+
+function buildTimeWindowChangeText(previousTimeWindow: TimeWindow | null, currentTimeWindow: TimeWindow): string {
+  const currentText = buildTimeWindowText(currentTimeWindow);
+  if (!currentText) {
+    return "";
+  }
+
+  const previousText = previousTimeWindow ? buildTimeWindowText(previousTimeWindow) : "";
+  if (previousText) {
+    return `Zeitfenster aktualisiert: von ${previousText} auf ${currentText}.`;
+  }
+
+  return `Aktualisiertes Zeitfenster: ${currentText}.`;
 }
 
 function municipalityListPaths(): string[] {
@@ -541,6 +621,22 @@ function getMinWarningLevel(): number {
   return value;
 }
 
+function isEnvFlagEnabled(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+function useStaticGeoSphereResponse(): boolean {
+  return isEnvFlagEnabled(process.env.HITZE_USE_STATIC_GEOSPHERE_RESPONSE);
+}
+
+function getGeoSphereWarnstatusUrl(): string {
+  return useStaticGeoSphereResponse() ? GEOSPHERE_STATIC_WARNSTATUS_URL : GEOSPHERE_WARNSTATUS_URL;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -601,19 +697,45 @@ async function fetchJsonWithRetry(url: string, requestId: string): Promise<unkno
   );
 }
 
+function extractGeoSphereFeatures(payload: unknown): unknown[] | null {
+  if (isRecord(payload) && Array.isArray(payload.features)) {
+    return payload.features;
+  }
+
+  if (isRecord(payload)) {
+    for (const nestedValue of Object.values(payload)) {
+      if (isRecord(nestedValue) && Array.isArray(nestedValue.features)) {
+        return nestedValue.features;
+      }
+
+      const wrappedValue = isRecord(nestedValue) ? nestedValue.value : null;
+      if (isRecord(wrappedValue) && Array.isArray(wrappedValue.features)) {
+        return wrappedValue.features;
+      }
+    }
+  }
+
+  return null;
+}
+
 async function fetchGeoSphereWarnings(
   requestId: string,
   minWarningLevel: number
 ): Promise<NormalizedWarning[]> {
-  const payload = await fetchJsonWithRetry(GEOSPHERE_WARNSTATUS_URL, requestId);
+  const payload = await fetchJsonWithRetry(getGeoSphereWarnstatusUrl(), requestId);
+  const features = extractGeoSphereFeatures(payload);
 
-  if (!isRecord(payload) || !Array.isArray(payload.features)) {
-    throw new AppError(502, "GEOSPHERE_SCHEMA_INVALID", "GeoSphere payload is missing a valid features array.");
+  if (!features) {
+    throw new AppError(
+      502,
+      "GEOSPHERE_SCHEMA_INVALID",
+      "GeoSphere payload is missing a valid features array."
+    );
   }
 
   const result: NormalizedWarning[] = [];
 
-  payload.features.forEach((feature, index) => {
+  features.forEach((feature, index) => {
     const normalized = normalizeWarning(feature, index, minWarningLevel);
     if (normalized) {
       result.push(normalized);
@@ -858,16 +980,25 @@ function dayKeyDaysAgoVienna(daysAgo: number): string {
 
 function pushContentForWarning(
   aggregate: MunicipalityAggregate,
-  timeWindow: { start: string; end: string }
+  timeWindow: TimeWindow,
+  previousTimeWindow: TimeWindow | null = null,
+  timeWindowChanged: boolean = false
 ): { title: string; body: string; collapsePrefix: string } {
   const name = municipalityDisplayName(aggregate.municipalityId);
   const timeWindowText = buildTimeWindowText(timeWindow);
+  const timeWindowChangeText = timeWindowChanged
+    ? buildTimeWindowChangeText(previousTimeWindow, timeWindow)
+    : "";
 
   if (aggregate.kind === "cold") {
     const bodyBase = `Achtung extreme Kälte in ${name}, Kälteschutz-Ausrüstung tragen.`;
     return {
       title: "Kälte-Warnung",
-      body: timeWindowText ? `${bodyBase} ${timeWindowText}` : bodyBase,
+      body: timeWindowChangeText
+        ? `${bodyBase} ${timeWindowChangeText}`
+        : timeWindowText
+          ? `${bodyBase} ${timeWindowText}`
+          : bodyBase,
       collapsePrefix: "kaelte",
     };
   }
@@ -875,7 +1006,11 @@ function pushContentForWarning(
   const bodyBase = `In ${name} wurde Warnstufe ${aggregate.maxLevel} erreicht. Hitzeschutzmaßnahmen nach Hitze-V umsetzen.`;
   return {
     title: "Hitze-Warnung",
-    body: timeWindowText ? `${bodyBase} ${timeWindowText}` : bodyBase,
+    body: timeWindowChangeText
+      ? `${bodyBase} ${timeWindowChangeText}`
+      : timeWindowText
+        ? `${bodyBase} ${timeWindowText}`
+        : bodyBase,
     collapsePrefix: "hitze",
   };
 }
@@ -1028,12 +1163,19 @@ export async function sendTestPushToToken(
 
 async function sendMunicipalityWarning(
   messaging: Messaging,
-  aggregate: MunicipalityAggregate
+  aggregate: MunicipalityAggregate,
+  previousTimeWindow: TimeWindow | null = null,
+  timeWindowChanged: boolean = false
 ): Promise<void> {
   const topic = topicForMunicipality(aggregate.municipalityId);
   const warningIds = Array.from(aggregate.warningIds).sort();
   const timeWindow = aggregateTimeWindow(aggregate);
-  const content = pushContentForWarning(aggregate, timeWindow);
+  const content = pushContentForWarning(
+    aggregate,
+    timeWindow,
+    previousTimeWindow,
+    timeWindowChanged
+  );
   const collapseId = `${content.collapsePrefix}-${aggregate.municipalityId}`;
   const warningStartLocal = formatPushTime(timeWindow.start);
   const warningEndLocal = formatPushTime(timeWindow.end);
@@ -1148,7 +1290,7 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
     const changedAggregateKeySet = new Set(changedAggregateKeys);
     const changedAggregates = aggregates.filter((aggregate) => changedAggregateKeySet.has(aggregateStateKey(aggregate)));
 
-    const sendCandidates: MunicipalityAggregate[] = [];
+    const sendCandidates: SendCandidate[] = [];
     const skippedRateLimitedKeys = new Set<string>();
 
     for (const aggregate of changedAggregates) {
@@ -1162,7 +1304,16 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
       const endChanged = (previousMetadata?.end ?? "") !== currentEnd;
 
       if (!sentToday || beginChanged || endChanged) {
-        sendCandidates.push(aggregate);
+        sendCandidates.push({
+          aggregate,
+          previousTimeWindow: previousMetadata
+            ? {
+                start: previousMetadata.start,
+                end: previousMetadata.end,
+              }
+            : null,
+          timeWindowChanged: beginChanged || endChanged,
+        });
         continue;
       }
 
@@ -1172,9 +1323,14 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
     const messaging = getFirebaseMessagingClient();
 
     const sendResults = await Promise.allSettled(
-      sendCandidates.map(async (aggregate) => {
-        await sendMunicipalityWarning(messaging, aggregate);
-        return aggregate.municipalityId;
+      sendCandidates.map(async (candidate) => {
+        await sendMunicipalityWarning(
+          messaging,
+          candidate.aggregate,
+          candidate.previousTimeWindow,
+          candidate.timeWindowChanged
+        );
+        return candidate.aggregate.municipalityId;
       })
     );
 
@@ -1183,7 +1339,8 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
     const failedMunicipalities: string[] = [];
 
     sendResults.forEach((result, index) => {
-      const aggregate = sendCandidates[index];
+      const candidate = sendCandidates[index];
+      const aggregate = candidate?.aggregate;
       const key = aggregate ? aggregateStateKey(aggregate) : null;
 
       if (!aggregate || !key) {
