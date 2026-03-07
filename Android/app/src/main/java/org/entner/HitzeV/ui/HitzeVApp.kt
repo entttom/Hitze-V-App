@@ -90,6 +90,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -124,9 +125,8 @@ import org.entner.HitzeV.ui.theme.CalmGreen
 import org.entner.HitzeV.ui.theme.ColorWhite
 import org.entner.HitzeV.ui.theme.GoldenSun
 import org.entner.HitzeV.ui.theme.HitzeVTheme
-import org.entner.HitzeV.ui.theme.SandBackground
 import org.entner.HitzeV.ui.theme.SkyBlue
-import org.entner.HitzeV.ui.theme.SoftBorder
+import org.entner.HitzeV.ui.theme.SurfaceDark
 import org.entner.HitzeV.ui.theme.SurfaceLight
 import java.time.LocalDate
 import java.util.Calendar
@@ -280,7 +280,7 @@ private fun DashboardScreen(
                     Text(
                         copy.shortTitle,
                         style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                        color = secondaryContentColor(onBackground = true)
                     )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -489,7 +489,7 @@ private fun GlanceCard(
             SectionEyebrow(text = copy.glanceTitle)
             Column {
                 Text(copy.glanceTitle, style = MaterialTheme.typography.titleLarge)
-                Text(copy.glanceSubtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
+                Text(copy.glanceSubtitle, style = MaterialTheme.typography.bodyMedium, color = secondaryContentColor())
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 GlanceTile(
@@ -537,7 +537,7 @@ private fun GlanceTile(
         ) {
             Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
             Text(value, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, maxLines = 2)
-            Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f))
+            Text(title, style = MaterialTheme.typography.labelSmall, color = secondaryContentColor())
         }
     }
 }
@@ -557,12 +557,12 @@ private fun WorksitesCard(
             if (worksites.isEmpty()) {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                    color = elevatedContainerColor()
                 ) {
                     Text(
                         text = copy.noWorkplaces,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        color = secondaryContentColor(),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(14.dp)
@@ -595,7 +595,7 @@ private fun LegalFooter(copy: Copybook, currentYear: Int) {
         Text(
             text = copy.copyrightLine(currentYear),
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            color = tertiaryContentColor(),
             textAlign = TextAlign.Center
         )
         TextButton(onClick = { uriHandler.openUri(copy.legalLinkURL) }) {
@@ -736,7 +736,7 @@ private fun WorksiteCard(
                         }
 
                         if (snapshot == null) {
-                            Text(copy.loading, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                            Text(copy.loading, style = MaterialTheme.typography.bodyMedium, color = secondaryContentColor())
                         } else {
                             Text(snapshot.municipalityName, style = MaterialTheme.typography.labelLarge, color = worksiteDetailColor(severity))
                             Row(
@@ -928,12 +928,12 @@ private fun AddWorkplaceScreen(
                     item {
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.74f)
+                            color = elevatedSurfaceColor()
                         ) {
                             Text(
                                 text = uiState.addressSearchMessage,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                color = secondaryContentColor(),
                                 modifier = Modifier.padding(14.dp)
                             )
                         }
@@ -969,10 +969,10 @@ private fun InputSection(
     leadingIcon: @Composable (() -> Unit)? = null
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        Text(label, style = MaterialTheme.typography.labelLarge, color = secondaryContentColor())
         Surface(
             shape = RoundedCornerShape(16.dp),
-            color = SurfaceLight.copy(alpha = 0.9f),
+            color = inputFieldContainerColor(),
             shadowElevation = 3.dp
         ) {
             OutlinedTextField(
@@ -1026,7 +1026,7 @@ private fun AddressResultCard(
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(result.title, style = MaterialTheme.typography.titleMedium)
-                Text(result.subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                Text(result.subtitle, style = MaterialTheme.typography.bodyMedium, color = secondaryContentColor())
             }
             Surface(onClick = onUseAddress, shape = CircleShape, color = SkyBlue) {
                 Text(
@@ -1337,7 +1337,7 @@ private fun LaunchOverlay(copy: Copybook) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(SandBackground)
+            .background(MaterialTheme.colorScheme.background)
     ) {
         Box(
             modifier = Modifier
@@ -1372,7 +1372,7 @@ private fun LaunchOverlay(copy: Copybook) {
             Spacer(modifier = Modifier.height(16.dp))
             Text(copy.shortTitle, style = MaterialTheme.typography.displayMedium, color = MaterialTheme.colorScheme.onBackground.copy(alpha = contentOpacity))
             Spacer(modifier = Modifier.height(8.dp))
-            Text(copy.dashboardTitle, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f * contentOpacity))
+            Text(copy.dashboardTitle, style = MaterialTheme.typography.titleMedium, color = secondaryContentColor(onBackground = true).copy(alpha = contentOpacity))
         }
     }
 }
@@ -1384,15 +1384,8 @@ private fun FrostedCard(content: @Composable ColumnScope.() -> Unit) {
             .fillMaxWidth()
             .shadow(14.dp, RoundedCornerShape(24.dp), ambientColor = Color.Black.copy(alpha = 0.08f), spotColor = Color.Black.copy(alpha = 0.08f))
             .clip(RoundedCornerShape(24.dp))
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.74f)
-                    )
-                )
-            )
-            .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), RoundedCornerShape(24.dp))
+            .background(frostedCardBrush())
+            .border(1.dp, frostedBorderColor(), RoundedCornerShape(24.dp))
     ) {
         Column(
             modifier = Modifier
@@ -1408,7 +1401,7 @@ private fun ToolbarCircleButton(icon: ImageVector, description: String, onClick:
     Surface(
         onClick = onClick,
         shape = CircleShape,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+        color = elevatedSurfaceColor(),
         shadowElevation = 4.dp
     ) {
         Box(modifier = Modifier.size(38.dp), contentAlignment = Alignment.Center) {
@@ -1422,7 +1415,7 @@ private fun SectionEyebrow(text: String) {
     Text(
         text = text.uppercase(),
         style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f)
+        color = eyebrowContentColor()
     )
 }
 
@@ -1496,7 +1489,7 @@ private fun GradientActionButton(
 
 @Composable
 private fun AtmosphereBackground() {
-    val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val isDark = isDarkThemeActive()
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1531,6 +1524,59 @@ private fun AtmosphereBackground() {
 
 private val WarmGradientStart = Color(0xFFF96F42)
 
+@Composable
+private fun isDarkThemeActive(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
+@Composable
+private fun secondaryContentColor(onBackground: Boolean = false): Color {
+    val base = if (onBackground) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurface
+    val alpha = if (isDarkThemeActive()) 0.84f else 0.7f
+    return base.copy(alpha = alpha)
+}
+
+@Composable
+private fun tertiaryContentColor(): Color {
+    val alpha = if (isDarkThemeActive()) 0.72f else 0.55f
+    return MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
+}
+
+@Composable
+private fun eyebrowContentColor(): Color {
+    val alpha = if (isDarkThemeActive()) 0.68f else 0.48f
+    return MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
+}
+
+@Composable
+private fun frostedCardBrush(): Brush = Brush.linearGradient(
+    colors = if (isDarkThemeActive()) {
+        listOf(
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.94f)
+        )
+    } else {
+        listOf(
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.74f)
+        )
+    }
+)
+
+@Composable
+private fun frostedBorderColor(): Color =
+    if (isDarkThemeActive()) ColorWhite.copy(alpha = 0.12f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+
+@Composable
+private fun elevatedSurfaceColor(): Color =
+    if (isDarkThemeActive()) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.82f)
+
+@Composable
+private fun elevatedContainerColor(): Color =
+    if (isDarkThemeActive()) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.88f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+
+@Composable
+private fun inputFieldContainerColor(): Color =
+    if (isDarkThemeActive()) SurfaceDark.copy(alpha = 0.96f) else SurfaceLight.copy(alpha = 0.9f)
+
 private fun severityColor(severity: HazardSeverity): Color = when (severity) {
     HazardSeverity.NONE, HazardSeverity.COLD_YELLOW, HazardSeverity.COLD_ORANGE, HazardSeverity.COLD_RED -> CalmGreen
     HazardSeverity.HEAT_YELLOW -> AlertYellow
@@ -1550,4 +1596,4 @@ private fun worksiteTitleColor(severity: HazardSeverity): Color =
 
 @Composable
 private fun worksiteDetailColor(severity: HazardSeverity): Color =
-    if (severity == HazardSeverity.NONE) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f) else ColorWhite.copy(alpha = 0.82f)
+    if (severity == HazardSeverity.NONE) secondaryContentColor() else ColorWhite.copy(alpha = 0.88f)
