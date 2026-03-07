@@ -35,6 +35,7 @@ final class DashboardViewModel: ObservableObject {
     private let userDefaults: UserDefaults
     private let storageKey = "dashboard.worksites.v1"
     private var hasLoaded = false
+    private var refreshTask: Task<Void, Never>?
 
     init(
         subscriptionManager: SubscriptionManager? = nil,
@@ -65,6 +66,24 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func refreshAll() async {
+        if let existingRefreshTask = refreshTask {
+            await existingRefreshTask.value
+            return
+        }
+
+        let task = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            await self.performRefreshAll()
+            await MainActor.run {
+                self.refreshTask = nil
+            }
+        }
+
+        refreshTask = task
+        await task.value
+    }
+
+    private func performRefreshAll() async {
         guard !isRefreshing else {
             return
         }

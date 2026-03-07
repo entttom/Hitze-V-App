@@ -202,10 +202,10 @@
           "empfehlungen": "Ausreichend trinken, Schatten nutzen, Pausen einplanen.",
           "meteotext": "Beispieldaten fuer App-Tests mit unterschiedlichen Uhrzeiten.",
           "updategrund": "Testdatensatz",
-          "warnstufeid": 3,
+          "warnstufeid": 2,
           "rawinfo": {
             "wtype": 6,
-            "wlevel": 3,
+            "wlevel": 2,
             "start": "1773141300",
             "end": "1773168300"
           }
