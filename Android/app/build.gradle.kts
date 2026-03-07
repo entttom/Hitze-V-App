@@ -1,9 +1,26 @@
+import java.util.Properties
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.google.services)
+    alias(libs.plugins.play.publisher)
+}
+
+val buildCalendar = Calendar.getInstance()
+val buildTime = SimpleDateFormat("yyMMddHH", Locale.US).format(buildCalendar.time)
+val buildMinute = buildCalendar.get(Calendar.MINUTE)
+val versionCodeValue = buildTime.toInt() * 60 + buildMinute
+
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(keystorePropertiesFile.inputStream())
 }
 
 android {
@@ -16,12 +33,23 @@ android {
         applicationId = "org.entner.HitzeV"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0"
+        versionCode = versionCodeValue
+        versionName = "1.0.${buildTime}.${buildMinute}"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+    }
+
+    signingConfigs {
+        if (keystoreProperties.isNotEmpty()) {
+            create("release") {
+                storeFile = file(keystoreProperties["storeFile"]!!.toString())
+                storePassword = keystoreProperties["storePassword"]!!.toString()
+                keyAlias = keystoreProperties["keyAlias"]!!.toString()
+                keyPassword = keystoreProperties["keyPassword"]!!.toString()
+            }
         }
     }
 
@@ -32,6 +60,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (keystoreProperties.isNotEmpty()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
@@ -49,6 +80,17 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+}
+
+play {
+    defaultToAppBundles.set(true)
+    track.set("Hitze-V")
+    val playCredentialsPath = rootProject.findProperty("playPublisherCredentials")?.toString()
+        ?: "play-publisher-credentials.json"
+    val playCredentialsFile = rootProject.file(playCredentialsPath)
+    if (playCredentialsFile.exists()) {
+        serviceAccountCredentials.set(playCredentialsFile)
     }
 }
 

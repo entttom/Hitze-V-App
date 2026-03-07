@@ -542,6 +542,11 @@ private struct WorksiteCard: View {
             return nil
         }
 
+        let levelSuffix: String = {
+            guard forecast.severity.level > 0 else { return "" }
+            return " (\(copy.t("Stufe", "Level")) \(forecast.severity.level))"
+        }()
+
         let calendar = Self.viennaCalendar
         let startOfDay = calendar.startOfDay(for: forecast.date)
         guard let endOfDay = calendar.date(byAdding: DateComponents(day: 1, second: -1), to: startOfDay) else {
@@ -551,10 +556,10 @@ private struct WorksiteCard: View {
         return forecast.warningTimeRanges
             .map { range in
                 if range.start == startOfDay && range.end == endOfDay {
-                    return copy.warningAllDay
+                    return "\(copy.warningAllDay)\(levelSuffix)"
                 }
 
-                return "\(Self.timeFormatter.string(from: range.start))-\(Self.timeFormatter.string(from: range.end))"
+                return "\(Self.timeFormatter.string(from: range.start))-\(Self.timeFormatter.string(from: range.end))\(levelSuffix)"
             }
             .joined(separator: " · ")
     }

@@ -340,6 +340,7 @@ final class DashboardDataService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 10
+        request.cachePolicy = .reloadIgnoringLocalCacheData
 
         do {
             return try await urlSession.data(for: request)

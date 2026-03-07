@@ -75,6 +75,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -307,41 +308,47 @@ private fun DashboardScreen(
         Box(modifier = Modifier.fillMaxSize()) {
             AtmosphereBackground()
 
-            LazyColumn(
+            PullToRefreshBox(
+                isRefreshing = uiState.isRefreshing,
+                onRefresh = onRefresh,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(paddingValues),
-                contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .padding(paddingValues)
             ) {
-                item {
-                    HeroCard(
-                        copy = copy,
-                        worksitesCount = uiState.worksites.size,
-                        warningCount = activeWarningCount,
-                        highestSeverity = highestSeverity,
-                        statusMessage = uiState.statusMessage,
-                        onRefresh = onRefresh
-                    )
-                }
-                item {
-                    GlanceCard(
-                        copy = copy,
-                        highestSeverity = highestSeverity,
-                        highestUv = highestUv,
-                        maxApparentTemperature = maxApparentTemperature
-                    )
-                }
-                item {
-                    WorksitesCard(
-                        copy = copy,
-                        worksites = uiState.worksites,
-                        snapshots = uiState.snapshots,
-                        onDeleteWorksite = onDeleteWorksite
-                    )
-                }
-                item {
-                    LegalFooter(copy = copy, currentYear = currentYear)
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 32.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    item {
+                        HeroCard(
+                            copy = copy,
+                            worksitesCount = uiState.worksites.size,
+                            warningCount = activeWarningCount,
+                            highestSeverity = highestSeverity,
+                            statusMessage = uiState.statusMessage,
+                            onRefresh = onRefresh
+                        )
+                    }
+                    item {
+                        GlanceCard(
+                            copy = copy,
+                            highestSeverity = highestSeverity,
+                            highestUv = highestUv,
+                            maxApparentTemperature = maxApparentTemperature
+                        )
+                    }
+                    item {
+                        WorksitesCard(
+                            copy = copy,
+                            worksites = uiState.worksites,
+                            snapshots = uiState.snapshots,
+                            onDeleteWorksite = onDeleteWorksite
+                        )
+                    }
+                    item {
+                        LegalFooter(copy = copy, currentYear = currentYear)
+                    }
                 }
             }
         }
@@ -865,16 +872,22 @@ private fun DailyForecastChip(
 private fun formatWarningTimeRanges(copy: Copybook, forecast: DailyForecast): String? {
     if (forecast.warningTimeRanges.isEmpty()) return null
 
+    val levelSuffix = if (forecast.severity.level > 0) {
+        " (${copy.t("Stufe", "Level")} ${forecast.severity.level})"
+    } else {
+        ""
+    }
+
     val startOfDay = forecast.date.atStartOfDay(viennaZoneId).toInstant()
     val endOfDay = forecast.date.plusDays(1).atStartOfDay(viennaZoneId).minusNanos(1).toInstant()
 
     return forecast.warningTimeRanges.joinToString(" · ") { range ->
         if (range.start == startOfDay && range.end == endOfDay) {
-            copy.warningAllDay
+            "${copy.warningAllDay}$levelSuffix"
         } else {
             val startText = warningTimeFormatter.format(range.start.atZone(viennaZoneId))
             val endText = warningTimeFormatter.format(range.end.atZone(viennaZoneId))
-            "$startText-$endText"
+            "$startText-$endText$levelSuffix"
         }
     }
 }

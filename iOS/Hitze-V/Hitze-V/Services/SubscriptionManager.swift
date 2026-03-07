@@ -200,6 +200,7 @@ final class SubscriptionManager: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = networkTimeout
+        request.cachePolicy = .reloadIgnoringLocalCacheData
 
         NSLog("GeoSphere subscription request URL: %@", url.absoluteString)
         let data: Data
