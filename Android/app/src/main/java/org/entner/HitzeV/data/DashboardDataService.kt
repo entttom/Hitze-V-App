@@ -21,7 +21,6 @@ import org.entner.HitzeV.model.GeoCoordinate
 import org.entner.HitzeV.model.HazardSeverity
 import org.entner.HitzeV.model.WarningTimeRange
 import org.entner.HitzeV.model.WorksiteSnapshot
-import java.io.BufferedReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.time.Instant
@@ -137,6 +136,13 @@ class DashboardDataService(
         try {
             val statusCode = connection.responseCode
             if (statusCode !in 200..299) {
+                val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                val parsedMunicipalityMessage = runCatching {
+                    json.parseToJsonElement(errorBody).jsonObject
+                }.getOrNull()?.municipalityNotFoundMessage()
+                if (!parsedMunicipalityMessage.isNullOrBlank()) {
+                    throw DashboardDataError.MunicipalityNotFound(parsedMunicipalityMessage)
+                }
                 throw DashboardDataError.Network("HTTP $statusCode")
             }
 
@@ -347,3 +353,20 @@ private fun JsonElement?.asStringOrNull(): String? =
     runCatching { this?.jsonPrimitive?.content }
         .getOrNull()
         ?.takeIf { it.isNotBlank() }
+
+private fun JsonObject.municipalityNotFoundMessage(): String? {
+    val type = this["type"].asStringOrNull()?.lowercase(Locale.ROOT)
+    if (type != "error") return null
+
+    val message = this["msg"].asStringOrNull() ?: return "Could not find municipal for coords."
+    val normalizedMessage = message.lowercase(Locale.ROOT)
+    return if (
+        normalizedMessage.contains("could not find municipal for coords") ||
+        normalizedMessage.contains("could not find municipality") ||
+        normalizedMessage.contains("municipal for coords")
+    ) {
+        message
+    } else {
+        null
+    }
+}

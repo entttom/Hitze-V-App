@@ -6,6 +6,7 @@ struct AddWorkplaceView: View {
     let copy: Copybook
     @Environment(\.dismiss) private var dismiss
     @FocusState private var isSearchFocused: Bool
+    @State private var addFailureMessage: String?
 
     private var buttonBackground: LinearGradient {
         LinearGradient(
@@ -70,6 +71,21 @@ struct AddWorkplaceView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                     isSearchFocused = true
                 }
+            }
+            .alert(
+                copy.t("Hinzufügen nicht möglich", "Unable to add"),
+                isPresented: Binding(
+                    get: { addFailureMessage != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            addFailureMessage = nil
+                        }
+                    }
+                )
+            ) {
+                Button(copy.cancelButton, role: .cancel) { }
+            } message: {
+                Text(addFailureMessage ?? "")
             }
         }
     }
@@ -183,8 +199,16 @@ struct AddWorkplaceView: View {
                     ForEach(viewModel.addressResults) { result in
                         AddressResultRow(copy: copy, result: result) {
                             Task {
-                                await viewModel.addWorksite(fromAddressResult: result)
-                                dismiss()
+                                let added = await viewModel.addWorksite(fromAddressResult: result)
+                                if added {
+                                    dismiss()
+                                } else {
+                                    addFailureMessage = viewModel.addressSearchMessage
+                                        ?? copy.t(
+                                            "Der Arbeitsplatz konnte nicht hinzugefügt werden.",
+                                            "The workplace could not be added."
+                                        )
+                                }
                             }
                         }
                         .shadow(color: .black.opacity(0.05), radius: 6, x: 0, y: 3)

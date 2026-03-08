@@ -110,6 +110,9 @@ final class DashboardDataService {
                 NSLog("GeoSphere HTTP failure: %ld for %@", httpResponse.statusCode, url.absoluteString)
                 NSLog("GeoSphere HTTP failure body preview: %@", bodyPreview)
             }
+            if let municipalityNotFoundMessage = municipalityNotFoundMessage(from: data) {
+                throw DashboardDataError.municipalityNotFound(message: municipalityNotFoundMessage)
+            }
             throw DashboardDataError.network(message: "GeoSphere HTTP Fehler")
         }
 
@@ -147,6 +150,30 @@ final class DashboardDataService {
             municipalityName: municipalityName,
             warnings: warnings
         )
+    }
+
+    private func municipalityNotFoundMessage(from data: Data) -> String? {
+        guard let decoded = try? JSONDecoder().decode(GeoSphereLookupResponse.self, from: data) else {
+            return nil
+        }
+
+        guard decoded.type.lowercased() == "error" else {
+            return nil
+        }
+
+        let message = decoded.msg?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !message.isEmpty else {
+            return "Could not find municipal for coords."
+        }
+
+        let normalizedMessage = message.lowercased()
+        if normalizedMessage.contains("could not find municipal for coords") ||
+            normalizedMessage.contains("could not find municipality") ||
+            normalizedMessage.contains("municipal for coords") {
+            return message
+        }
+
+        return nil
     }
     
     private func parseGeosphereTimestamp(_ value: String?) -> Date? {

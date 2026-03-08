@@ -25,7 +25,6 @@ final class DashboardViewModel: ObservableObject {
     @Published private(set) var isSearchingAddress = false
     @Published private(set) var snapshots: [UUID: WorksiteSnapshot] = [:]
     @Published private(set) var isRefreshing = false
-    @Published private(set) var statusMessage: String?
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -89,11 +88,9 @@ final class DashboardViewModel: ObservableObject {
         }
 
         isRefreshing = true
-        statusMessage = nil
         defer { isRefreshing = false }
 
         var nextSnapshots = snapshots
-        var errors: [String] = []
 
         for worksite in worksites {
             do {
@@ -115,7 +112,6 @@ final class DashboardViewModel: ObservableObject {
                     worksite.longitude,
                     error.localizedDescription
                 )
-                errors.append(error.localizedDescription)
             }
         }
 
@@ -124,13 +120,6 @@ final class DashboardViewModel: ObservableObject {
         await subscriptionManager.syncTopics(for: worksites.map(\.coordinate))
         if let error = subscriptionManager.lastError?.errorDescription {
             NSLog("Subscription sync failed: %@", error)
-            errors.append(error)
-        }
-
-        if errors.isEmpty {
-            statusMessage = nil
-        } else {
-            statusMessage = errors.joined(separator: "\n")
         }
     }
 
@@ -185,8 +174,20 @@ final class DashboardViewModel: ObservableObject {
         }
     }
 
-    func addWorksite(fromAddressResult result: AddressSearchResult) async {
-        statusMessage = nil
+    func addWorksite(fromAddressResult result: AddressSearchResult) async -> Bool {
+        addressSearchMessage = nil
+
+        do {
+            _ = try await dataService.fetchSnapshot(for: result.coordinate)
+        } catch {
+            if isOutsideAustriaMunicipalityError(error) {
+                addressSearchMessage = "Dieses Gebiet liegt vermutlich außerhalb Österreichs oder wird von GeoSphere nicht erkannt. Ein Hinzufügen ist nicht möglich. / This area is likely outside Austria or not recognized by GeoSphere. Adding is not possible."
+                return false
+            }
+
+            addressSearchMessage = error.localizedDescription
+            return false
+        }
 
         let trimmedName = nameInput.trimmed
         let worksite = Worksite(
@@ -205,6 +206,7 @@ final class DashboardViewModel: ObservableObject {
         addressSearchMessage = nil
 
         await refreshAll()
+        return true
     }
 
     func deleteWorksites(at offsets: IndexSet) async {
@@ -227,9 +229,6 @@ final class DashboardViewModel: ObservableObject {
         persistWorksites()
 
         await subscriptionManager.syncTopics(for: worksites.map(\.coordinate))
-        if let error = subscriptionManager.lastError?.errorDescription {
-            statusMessage = error
-        }
     }
 
     func deleteWorksite(id: UUID) async {
@@ -303,6 +302,14 @@ final class DashboardViewModel: ObservableObject {
         if let encoded = try? JSONEncoder().encode(worksites) {
             userDefaults.set(encoded, forKey: storageKey)
         }
+    }
+
+    private func isOutsideAustriaMunicipalityError(_ error: Error) -> Bool {
+        guard case DashboardDataError.municipalityNotFound = error else {
+            return false
+        }
+
+        return true
     }
 }
 

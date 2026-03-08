@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.entner.HitzeV.config.AppFeatureFlags
 import org.entner.HitzeV.data.AppStorage
+import org.entner.HitzeV.data.DashboardDataError
 import org.entner.HitzeV.data.DashboardDataService
 import org.entner.HitzeV.data.FirebaseRegistrationManager
 import org.entner.HitzeV.data.NominatimSearchResult
@@ -46,29 +47,24 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         if (_uiState.value.isRefreshing) return
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isRefreshing = true, statusMessage = null) }
+            _uiState.update { it.copy(isRefreshing = true) }
 
             val nextSnapshots = _uiState.value.snapshots.toMutableMap()
-            val errors = mutableListOf<String>()
 
             worksites.forEach { worksite ->
                 runCatching { dashboardDataService.fetchSnapshot(worksite.coordinate) }
                     .onSuccess { snapshot ->
                         nextSnapshots[worksite.id] = snapshot
                     }
-                    .onFailure { error ->
-                        errors += (error.message ?: "Unbekannter Fehler.")
-                    }
+                    .onFailure { }
             }
 
-            val subscriptionError = subscriptionManager.syncTopics(worksites.map(Worksite::coordinate))
-            subscriptionError?.message?.let(errors::add)
+            subscriptionManager.syncTopics(worksites.map(Worksite::coordinate))
 
             _uiState.update {
                 it.copy(
                     snapshots = nextSnapshots,
-                    isRefreshing = false,
-                    statusMessage = errors.takeIf(List<String>::isNotEmpty)?.joinToString("\n")
+                    isRefreshing = false
                 )
             }
         }
@@ -89,6 +85,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     fun addWorksite(result: AddressSearchResult, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             val currentState = _uiState.value
+            val copy = currentCopy()
             val trimmedName = currentState.nameInput.trim()
             val worksite = Worksite(
                 name = if (trimmedName.isNotEmpty()) trimmedName else result.title,
@@ -96,6 +93,22 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 latitude = result.latitude,
                 longitude = result.longitude
             )
+
+            val validationError = runCatching {
+                dashboardDataService.fetchSnapshot(worksite.coordinate)
+            }.exceptionOrNull()
+
+            if (validationError != null) {
+                _uiState.update {
+                    it.copy(
+                        addressSearchMessage = when (validationError) {
+                            is DashboardDataError.MunicipalityNotFound -> copy.addOutsideAustriaMessage
+                            else -> copy.addressSearchFailedMessage
+                        }
+                    )
+                }
+                return@launch
+            }
 
             val updatedWorksites = currentState.worksites + worksite
             appStorage.saveWorksites(updatedWorksites)
@@ -118,12 +131,11 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             val updatedSnapshots = _uiState.value.snapshots - id
             appStorage.saveWorksites(updatedWorksites)
 
-            val subscriptionError = subscriptionManager.syncTopics(updatedWorksites.map(Worksite::coordinate))
+            subscriptionManager.syncTopics(updatedWorksites.map(Worksite::coordinate))
 
             _uiState.update {
                 it.copy(
-                    snapshots = updatedSnapshots,
-                    statusMessage = subscriptionError?.message
+                    snapshots = updatedSnapshots
                 )
             }
         }
@@ -247,7 +259,6 @@ data class DashboardUiState(
     val isSearchingAddress: Boolean = false,
     val snapshots: Map<String, WorksiteSnapshot> = emptyMap(),
     val isRefreshing: Boolean = false,
-    val statusMessage: String? = null,
     val appLanguage: AppLanguage = AppLanguage.SYSTEM,
     val appTheme: AppTheme = AppTheme.SYSTEM,
     val hasCompletedOnboarding: Boolean = false,

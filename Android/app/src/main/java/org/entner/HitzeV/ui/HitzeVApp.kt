@@ -54,7 +54,6 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.LocationOn
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ReportProblem
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -69,6 +68,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -133,6 +133,7 @@ import org.entner.HitzeV.ui.theme.SkyBlue
 import org.entner.HitzeV.ui.theme.SurfaceDark
 import org.entner.HitzeV.ui.theme.SurfaceLight
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
@@ -146,6 +147,38 @@ private object Routes {
 
 private val warningTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 private val viennaZoneId: ZoneId = ZoneId.of("Europe/Vienna")
+
+private enum class UvExposureLevel {
+    NONE,
+    LEVEL_3_5,
+    LEVEL_6_7,
+    LEVEL_8_10,
+    LEVEL_11_PLUS
+}
+
+private fun uvExposureLevel(uvIndex: Double?): UvExposureLevel {
+    if (uvIndex == null) return UvExposureLevel.NONE
+    return when {
+        uvIndex < 3.0 -> UvExposureLevel.NONE
+        uvIndex < 6.0 -> UvExposureLevel.LEVEL_3_5
+        uvIndex < 8.0 -> UvExposureLevel.LEVEL_6_7
+        uvIndex < 11.0 -> UvExposureLevel.LEVEL_8_10
+        else -> UvExposureLevel.LEVEL_11_PLUS
+    }
+}
+
+private fun isUvRestrictionWindowNow(): Boolean {
+    val hour = LocalTime.now(viennaZoneId).hour
+    return hour in 11..14
+}
+
+private fun uvWarningTint(level: UvExposureLevel): Color = when (level) {
+    UvExposureLevel.LEVEL_6_7 -> AlertOrange
+    UvExposureLevel.LEVEL_8_10 -> AlertRed
+    UvExposureLevel.LEVEL_11_PLUS -> Color(0xFF6B7280)
+    UvExposureLevel.NONE,
+    UvExposureLevel.LEVEL_3_5 -> Color.Transparent
+}
 
 @Composable
 fun HitzeVApp(viewModel: DashboardViewModel = viewModel()) {
@@ -325,9 +358,7 @@ private fun DashboardScreen(
                             copy = copy,
                             worksitesCount = uiState.worksites.size,
                             warningCount = activeWarningCount,
-                            highestSeverity = highestSeverity,
-                            statusMessage = uiState.statusMessage,
-                            onRefresh = onRefresh
+                            highestSeverity = highestSeverity
                         )
                     }
                     item {
@@ -360,9 +391,7 @@ private fun HeroCard(
     copy: Copybook,
     worksitesCount: Int,
     warningCount: Int,
-    highestSeverity: HazardSeverity,
-    statusMessage: String?,
-    onRefresh: () -> Unit
+    highestSeverity: HazardSeverity
 ) {
     Box(
         modifier = Modifier
@@ -430,35 +459,6 @@ private fun HeroCard(
                 )
             }
 
-            if (!statusMessage.isNullOrBlank()) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color.Black.copy(alpha = 0.16f)
-                ) {
-                    Text(
-                        text = statusMessage,
-                        color = ColorWhite,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
-                    )
-                }
-            }
-
-            Surface(
-                onClick = onRefresh,
-                shape = RoundedCornerShape(999.dp),
-                color = ColorWhite.copy(alpha = 0.18f)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Rounded.Refresh, contentDescription = null, tint = ColorWhite, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(copy.refreshButton, color = ColorWhite, style = MaterialTheme.typography.labelLarge)
-                }
-            }
         }
     }
 }
@@ -631,6 +631,23 @@ private fun WorksiteCard(
     var showDeleteConfirmation by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
     val severity = snapshot?.severity ?: HazardSeverity.NONE
+    val uvLevel = uvExposureLevel(snapshot?.uvIndex)
+    val isUvRestrictionWindow = isUvRestrictionWindowNow()
+    val uvBadgeTitle = when (uvLevel) {
+        UvExposureLevel.LEVEL_6_7 -> copy.uvWarningBadge67
+        UvExposureLevel.LEVEL_8_10 -> copy.uvWarningBadge810
+        UvExposureLevel.LEVEL_11_PLUS -> copy.uvWarningBadge11Plus
+        UvExposureLevel.NONE,
+        UvExposureLevel.LEVEL_3_5 -> null
+    }
+    val uvDetailText = when (uvLevel) {
+        UvExposureLevel.LEVEL_6_7 -> if (isUvRestrictionWindow) copy.uvWarningDetail67 else copy.uvWarningDetail67OutsideWindow
+        UvExposureLevel.LEVEL_8_10 -> if (isUvRestrictionWindow) copy.uvWarningDetail810 else copy.uvWarningDetail810OutsideWindow
+        UvExposureLevel.LEVEL_11_PLUS -> copy.uvWarningDetail11Plus
+        UvExposureLevel.NONE,
+        UvExposureLevel.LEVEL_3_5 -> null
+    }
+    val uvWarningColor = uvWarningTint(uvLevel)
     val isActive = showDeleteConfirmation || isPressed
     val scale by animateFloatAsState(if (isActive) 0.985f else 1f, label = "worksiteScale")
     val borderColor = if (isActive) AlertRed.copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.06f)
@@ -747,6 +764,20 @@ private fun WorksiteCard(
                                 Column(horizontalAlignment = Alignment.End) {
                                     MiniFact(Icons.Rounded.WarningAmber, snapshot.uvIndex?.let { "UV %.1f".format(it) } ?: "UV ${copy.notAvailableShort}", worksiteDetailColor(severity))
                                     MiniFact(Icons.Rounded.Thermostat, snapshot.apparentTemperature?.let { "%.1f C".format(it) } ?: copy.notAvailableShort, worksiteDetailColor(severity))
+                                    if (!uvBadgeTitle.isNullOrBlank()) {
+                                        Surface(
+                                            modifier = Modifier.padding(top = 4.dp),
+                                            shape = RoundedCornerShape(999.dp),
+                                            color = uvWarningColor
+                                        ) {
+                                            Text(
+                                                text = uvBadgeTitle,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = ColorWhite,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -755,6 +786,23 @@ private fun WorksiteCard(
                             Text(copy.loading, style = MaterialTheme.typography.bodyMedium, color = secondaryContentColor())
                         } else {
                             Text(snapshot.municipalityName, style = MaterialTheme.typography.labelLarge, color = worksiteDetailColor(severity))
+                            if (!uvDetailText.isNullOrBlank()) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Top) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.ReportProblem,
+                                        contentDescription = null,
+                                        tint = uvWarningColor,
+                                        modifier = Modifier
+                                            .padding(top = 2.dp)
+                                            .size(14.dp)
+                                    )
+                                    Text(
+                                        text = uvDetailText,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = uvWarningColor
+                                    )
+                                }
+                            }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.Center
@@ -873,7 +921,7 @@ private fun formatWarningTimeRanges(copy: Copybook, forecast: DailyForecast): St
     if (forecast.warningTimeRanges.isEmpty()) return null
 
     val levelSuffix = if (forecast.severity.level > 0) {
-        " (${copy.t("Stufe", "Level")} ${forecast.severity.level})"
+        " (${copy.heatWarningLevelLabel} ${forecast.severity.level})"
     } else {
         ""
     }
@@ -903,9 +951,31 @@ private fun AddWorkplaceScreen(
     onUseAddress: (AddressSearchResult) -> Unit
 ) {
     val addressFocusRequester = remember { FocusRequester() }
+    var isAwaitingAddResult by remember { mutableStateOf(false) }
+    var addFailureMessage by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(uiState.addressSearchMessage, isAwaitingAddResult) {
+        if (isAwaitingAddResult && !uiState.addressSearchMessage.isNullOrBlank()) {
+            addFailureMessage = uiState.addressSearchMessage
+            isAwaitingAddResult = false
+        }
+    }
 
     LaunchedEffect(Unit) {
         addressFocusRequester.requestFocus()
+    }
+
+    if (!addFailureMessage.isNullOrBlank()) {
+        AlertDialog(
+            onDismissRequest = { addFailureMessage = null },
+            title = { Text(copy.t("Hinzufügen nicht möglich", "Unable to add")) },
+            text = { Text(addFailureMessage.orEmpty()) },
+            confirmButton = {
+                TextButton(onClick = { addFailureMessage = null }) {
+                    Text(copy.cancelButton)
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -1001,7 +1071,14 @@ private fun AddWorkplaceScreen(
                     }
 
                     items(uiState.addressResults, key = { it.id }) { result ->
-                        AddressResultCard(copy = copy, result = result, onUseAddress = { onUseAddress(result) })
+                        AddressResultCard(
+                            copy = copy,
+                            result = result,
+                            onUseAddress = {
+                                isAwaitingAddResult = true
+                                onUseAddress(result)
+                            }
+                        )
                     }
                 }
             }
@@ -1051,6 +1128,11 @@ private fun InputSection(
                 },
                 placeholder = { Text(placeholder) },
                 shape = RoundedCornerShape(16.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    disabledContainerColor = Color.Transparent
+                ),
                 keyboardOptions = KeyboardOptions(imeAction = imeAction),
                 keyboardActions = keyboardActions,
                 singleLine = true
@@ -1270,6 +1352,21 @@ private fun InfoScreen(copy: Copybook, onClose: () -> Unit) {
             item {
                 InfoCard(level = "4", tint = AlertRed, title = copy.infoScreenLevel4Title, body = copy.infoScreenLevel4Body)
             }
+            item {
+                HeroSheetCard(title = copy.infoScreenUvMeasuresTitle, body = copy.infoScreenUvMeasuresSubtitle)
+            }
+            item {
+                InfoCard(level = "3-5", tint = AlertYellow, title = copy.infoScreenUvLevel35Title, body = copy.infoScreenUvLevel35Body)
+            }
+            item {
+                InfoCard(level = "6-7", tint = AlertOrange, title = copy.infoScreenUvLevel67Title, body = copy.infoScreenUvLevel67Body)
+            }
+            item {
+                InfoCard(level = "8-10", tint = AlertRed, title = copy.infoScreenUvLevel810Title, body = copy.infoScreenUvLevel810Body)
+            }
+            item {
+                InfoCard(level = ">=11", tint = Color(0xFF6B7280), title = copy.infoScreenUvLevel11Title, body = copy.infoScreenUvLevel11Body)
+            }
         }
     }
 }
@@ -1469,7 +1566,7 @@ private fun ToolbarCircleButton(icon: ImageVector, description: String, onClick:
     Surface(
         onClick = onClick,
         shape = CircleShape,
-        color = elevatedSurfaceColor(),
+        color = elevatedContainerColor(),
         shadowElevation = 4.dp
     ) {
         Box(modifier = Modifier.size(38.dp), contentAlignment = Alignment.Center) {

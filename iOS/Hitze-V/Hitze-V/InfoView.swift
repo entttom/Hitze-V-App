@@ -44,6 +44,53 @@ struct InfoView: View {
                         body: copy.infoScreenLevel4Body
                     )
                 }
+
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(copy.infoScreenUvMeasuresTitle)
+                            .font(.system(.headline, design: .rounded).weight(.bold))
+                        Text(copy.infoScreenUvMeasuresSubtitle)
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Section {
+                    infoCard(
+                        icon: "sun.max.fill",
+                        tint: Color(red: 0.89, green: 0.72, blue: 0.11),
+                        title: copy.infoScreenUvLevel35Title,
+                        body: copy.infoScreenUvLevel35Body
+                    )
+                }
+
+                Section {
+                    infoCard(
+                        icon: "sun.max.fill",
+                        tint: Color(red: 0.95, green: 0.52, blue: 0.18),
+                        title: copy.infoScreenUvLevel67Title,
+                        body: copy.infoScreenUvLevel67Body
+                    )
+                }
+
+                Section {
+                    infoCard(
+                        icon: "sun.max.fill",
+                        tint: Color(red: 0.85, green: 0.24, blue: 0.20),
+                        title: copy.infoScreenUvLevel810Title,
+                        body: copy.infoScreenUvLevel810Body
+                    )
+                }
+
+                Section {
+                    infoCard(
+                        icon: "sun.max.fill",
+                        tint: Color(red: 0.42, green: 0.45, blue: 0.50),
+                        title: copy.infoScreenUvLevel11Title,
+                        body: copy.infoScreenUvLevel11Body
+                    )
+                }
             }
             .listStyle(.insetGrouped)
             .navigationTitle(copy.infoScreenTitle)

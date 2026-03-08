@@ -147,15 +147,6 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity)
 
-            if let statusMessage = viewModel.statusMessage,
-               !statusMessage.isEmpty {
-                Label(statusMessage, systemImage: "exclamationmark.circle.fill")
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(.white)
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 12)
-                    .background(Color.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
         }
         .padding(20)
         .background(
@@ -304,6 +295,43 @@ struct ContentView: View {
 }
 
 private struct WorksiteCard: View {
+    private enum UvExposureLevel {
+        case none
+        case level35
+        case level67
+        case level810
+        case level11Plus
+
+        init(uvIndex: Double?) {
+            guard let uvIndex else {
+                self = .none
+                return
+            }
+
+            switch uvIndex {
+            case ..<3:
+                self = .none
+            case ..<6:
+                self = .level35
+            case ..<8:
+                self = .level67
+            case ..<11:
+                self = .level810
+            default:
+                self = .level11Plus
+            }
+        }
+
+        var isWarning: Bool {
+            switch self {
+            case .level67, .level810, .level11Plus:
+                return true
+            case .none, .level35:
+                return false
+            }
+        }
+    }
+
     let copy: Copybook
     let worksite: Worksite
     let snapshot: WorksiteSnapshot?
@@ -338,6 +366,54 @@ private struct WorksiteCard: View {
 
     private var cardShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous)
+    }
+
+    private var uvExposureLevel: UvExposureLevel {
+        UvExposureLevel(uvIndex: snapshot?.uvIndex)
+    }
+
+    private var isUvRestrictionWindow: Bool {
+        let hour = Self.viennaCalendar.component(.hour, from: Date())
+        return hour >= 11 && hour < 15
+    }
+
+    private var uvWarningBadgeTitle: String? {
+        switch uvExposureLevel {
+        case .level67:
+            return copy.uvWarningBadge67
+        case .level810:
+            return copy.uvWarningBadge810
+        case .level11Plus:
+            return copy.uvWarningBadge11Plus
+        case .none, .level35:
+            return nil
+        }
+    }
+
+    private var uvWarningDetail: String? {
+        switch uvExposureLevel {
+        case .level67:
+            return isUvRestrictionWindow ? copy.uvWarningDetail67 : copy.uvWarningDetail67OutsideWindow
+        case .level810:
+            return isUvRestrictionWindow ? copy.uvWarningDetail810 : copy.uvWarningDetail810OutsideWindow
+        case .level11Plus:
+            return copy.uvWarningDetail11Plus
+        case .none, .level35:
+            return nil
+        }
+    }
+
+    private var uvWarningTint: Color {
+        switch uvExposureLevel {
+        case .level67:
+            return Color(red: 0.95, green: 0.52, blue: 0.18)
+        case .level810:
+            return Color(red: 0.85, green: 0.24, blue: 0.20)
+        case .level11Plus:
+            return Color(red: 0.42, green: 0.45, blue: 0.50)
+        case .none, .level35:
+            return .clear
+        }
     }
 
     private var isDeleteHighlightActive: Bool {
@@ -399,6 +475,14 @@ private struct WorksiteCard: View {
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(detailColor)
 
+                    if let uvWarningDetail {
+                        Label(uvWarningDetail, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(.caption2, design: .rounded).weight(.semibold))
+                            .foregroundStyle(uvWarningTint)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                    }
+
                     if !snapshot.forecasts.isEmpty {
                         HStack(spacing: 8) {
                             ForEach(snapshot.forecasts) { forecast in
@@ -448,9 +532,20 @@ private struct WorksiteCard: View {
             Spacer(minLength: 8)
 
             if let snapshot {
-                HStack(spacing: 8) {
-                    miniFact(icon: "sun.max", text: uvText(snapshot.uvIndex))
-                    miniFact(icon: "thermometer", text: tempText(snapshot.apparentTemperature))
+                VStack(alignment: .trailing, spacing: 6) {
+                    HStack(spacing: 8) {
+                        miniFact(icon: "sun.max", text: uvText(snapshot.uvIndex))
+                        miniFact(icon: "thermometer", text: tempText(snapshot.apparentTemperature))
+                    }
+
+                    if let uvWarningBadgeTitle {
+                        Text(uvWarningBadgeTitle)
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(uvWarningTint, in: Capsule())
+                    }
                 }
             }
         }
@@ -544,7 +639,7 @@ private struct WorksiteCard: View {
 
         let levelSuffix: String = {
             guard forecast.severity.level > 0 else { return "" }
-            return " (\(copy.t("Stufe", "Level")) \(forecast.severity.level))"
+            return " (\(copy.heatWarningLevelLabel) \(forecast.severity.level))"
         }()
 
         let calendar = Self.viennaCalendar
@@ -753,8 +848,31 @@ private struct AtmosphereBackground: View {
 
 enum AppLanguage: String, CaseIterable, Identifiable {
     case system
+    case bg
+    case da
     case de
     case en
+    case et
+    case fi
+    case fr
+    case el
+    case ga
+    case it
+    case hr
+    case lv
+    case lt
+    case mt
+    case nl
+    case pl
+    case pt
+    case ro
+    case sv
+    case sk
+    case sl
+    case es
+    case cs
+    case hu
+    case tr
 
     var id: String { rawValue }
 
@@ -762,33 +880,134 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         switch self {
         case .de:
             return .de
+        case .bg:
+            return .bg
+        case .da:
+            return .da
         case .en:
             return .en
+        case .et:
+            return .et
+        case .fi:
+            return .fi
+        case .fr:
+            return .fr
+        case .el:
+            return .el
+        case .ga:
+            return .ga
+        case .it:
+            return .it
+        case .hr:
+            return .hr
+        case .lv:
+            return .lv
+        case .lt:
+            return .lt
+        case .mt:
+            return .mt
+        case .nl:
+            return .nl
+        case .pl:
+            return .pl
+        case .pt:
+            return .pt
+        case .ro:
+            return .ro
+        case .sv:
+            return .sv
+        case .sk:
+            return .sk
+        case .sl:
+            return .sl
+        case .es:
+            return .es
+        case .cs:
+            return .cs
+        case .hu:
+            return .hu
+        case .tr:
+            return .tr
         case .system:
             let languageCode = Locale.current.language.languageCode?.identifier.lowercased() ?? "en"
-            return languageCode.hasPrefix("de") ? .de : .en
+            switch languageCode {
+            case "de": return .de
+            case "bg": return .bg
+            case "da": return .da
+            case "en": return .en
+            case "et": return .et
+            case "fi": return .fi
+            case "fr": return .fr
+            case "el": return .el
+            case "ga": return .ga
+            case "it": return .it
+            case "hr": return .hr
+            case "lv": return .lv
+            case "lt": return .lt
+            case "mt": return .mt
+            case "nl": return .nl
+            case "pl": return .pl
+            case "pt": return .pt
+            case "ro": return .ro
+            case "sv": return .sv
+            case "sk": return .sk
+            case "sl": return .sl
+            case "es": return .es
+            case "cs": return .cs
+            case "hu": return .hu
+            case "tr": return .tr
+            default: return .en
+            }
         }
     }
 }
 
 enum ResolvedLanguage {
     case de
+    case bg
+    case da
     case en
+    case et
+    case fi
+    case fr
+    case el
+    case ga
+    case it
+    case hr
+    case lv
+    case lt
+    case mt
+    case nl
+    case pl
+    case pt
+    case ro
+    case sv
+    case sk
+    case sl
+    case es
+    case cs
+    case hu
+    case tr
 }
 
 struct Copybook {
     let language: ResolvedLanguage
 
-    private var isGerman: Bool {
-        language == .de
-    }
-
     func t(_ german: String, _ english: String) -> String {
-        isGerman ? german : english
+        switch language {
+        case .de:
+            return german
+        case .en:
+            return english
+        default:
+            return Self.translations[language]?[english]
+                ?? Self.longTextTranslations[language]?[english]
+                ?? english
+        }
     }
 
     var shortTitle: String { t("Hitze-V", "Heat-V") }
-    var dashboardTitle: String { t("Sicher durch Hitze", "Heat Safety at a Glance") }
+    var dashboardTitle: String { t("Sicher durch die Hitze", "Heat Safety at a Glance") }
     var dashboardSubtitle: String { t("Ampelstatus, UV und Arbeitsplätze live auf einen Blick.", "Traffic-light status, UV and workplaces live in one view.") }
     var glanceTitle: String { t("Schnellübersicht", "Quick Glance") }
     var glanceSubtitle: String { t("Maximalwerte aller Arbeitsplätze", "Maximum values across all workplaces") }
@@ -822,6 +1041,16 @@ struct Copybook {
     var infoScreenTitle: String { t("Info", "Info") }
     var infoScreenHeatMeasuresTitle: String { t("Hitze-Schutzmaßnahmen", "Heat Protection Measures") }
     var infoScreenHeatMeasuresSubtitle: String { t("Erklärung der Werte für die Stufen 2 bis 4", "Explanation of values for levels 2 to 4") }
+    var infoScreenUvMeasuresTitle: String { t("UV-Schutzmaßnahmen", "UV Protection Measures") }
+    var infoScreenUvMeasuresSubtitle: String { t("Der höchste UV-Index des Tages bestimmt die Belastung durch UV-Strahlung. In Österreich ist von April bis September zwischen 11:00 und 15:00 Uhr meist mit einem UV-Index >= 5 zu rechnen.", "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.") }
+    var infoScreenUvLevel35Title: String { t("UV-Index 3-5", "UV Index 3-5") }
+    var infoScreenUvLevel35Body: String { t("Pflicht: T-Shirt bis mindestens Mitte Oberarm, Hose bis mindestens zum Knie. Empfohlen: Kopfbedeckung, Sonnenbrille, Sonnencreme. Keine Arbeitseinschränkungen.", "Mandatory: T-shirt to at least mid upper arm, trousers to at least the knee. Recommended: head covering, sunglasses, sunscreen. No work restrictions.") }
+    var infoScreenUvLevel67Title: String { t("UV-Index 6-7", "UV Index 6-7") }
+    var infoScreenUvLevel67Body: String { t("Pflicht: Kleidung wie oben plus Kopfbedeckung (idealerweise mit Nackenschutz), Sonnenbrille und Sonnencreme. Arbeit in direkter Sonne zwischen 11:00 und 15:00 Uhr maximal 2 Stunden, sonst Schatten oder Indoor.", "Mandatory: clothing as above plus head covering (ideally with neck protection), sunglasses, and sunscreen. Direct sun exposure between 11:00 and 15:00 limited to a maximum of 2 hours, otherwise shade or indoors.") }
+    var infoScreenUvLevel810Title: String { t("UV-Index 8-10", "UV Index 8-10") }
+    var infoScreenUvLevel810Body: String { t("Gleiche Schutzmaßnahmen wie bei UV-Index 6-7. Arbeit in direkter Sonne zwischen 11:00 und 15:00 Uhr maximal 1 Stunde, sonst Schatten oder Indoor.", "Same protective measures as UV index 6-7. Direct sun exposure between 11:00 and 15:00 limited to a maximum of 1 hour, otherwise shade or indoors.") }
+    var infoScreenUvLevel11Title: String { t("UV-Index >= 11", "UV Index >= 11") }
+    var infoScreenUvLevel11Body: String { t("Wurde im österreichischen Flachland bisher nicht gemessen.", "Has not been measured in Austrian lowland regions so far.") }
     var infoScreenLevel2Title: String { t("2 (gefühlte Temperatur ≥ 30 °C)", "2 (apparent temperature ≥ 30 °C)") }
     var infoScreenLevel2Body: String { t("Bei dieser Belastung sollte die Arbeit so organisiert werden, dass zwischen 11:00 und 15:00 Uhr keine mittelschweren Tätigkeiten im Freien durchgeführt werden. Nutzen Sie kühlere Tageszeiten, häufige Trinkpausen und schattige Bereiche, um die körperliche Belastung wirksam zu reduzieren.", "At this level, work should be organized so that no medium-heavy outdoor tasks are carried out between 11:00 and 15:00. Use cooler times of day, frequent hydration breaks, and shaded areas to effectively reduce physical strain.") }
     var infoScreenLevel3Title: String { t("3 (gefühlte Temperatur ≥ 35 °C)", "3 (apparent temperature ≥ 35 °C)") }
@@ -849,10 +1078,19 @@ struct Copybook {
     var onboardingWelcomeTitle: String { t("Willkommen bei Hitze-V", "Welcome to Hitze-V") }
     var onboardingWelcomeText: String { t("Wir helfen dir, die gesetzlichen Vorgaben zu Gefahren durch Hitze und natürliche UV-Strahlung bei Arbeiten im Freien einzuhalten. Behalte Temperaturen und UV-Index immer im Blick.", "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.") }
     var onboardingPushTitle: String { t("Bleib informiert", "Stay informed") }
-    var onboardingPushText: String { t("Damit wir dich bei gefährlichen Hitzewerten an deinen Arbeitsplätzen rechtzeitig warnen können, benötigen wir deine Erlaubnis für Push-Benachrichtigungen. Bitte erlaube diese im nächsten Schritt.", "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.") }
+    var onboardingPushText: String { t("Damit wir dich bei gefährlichen Hitzewerten an deinen Arbeitsplätzen rechtzeitig warnen können, benötigen wir deine Erlaubnis für Push-Benachrichtigungen. Push-Nachrichten sind aktuell nur für Hitzewarnmeldungen auf iOS und Android verfügbar. UV-Warnmeldungen können derzeit nicht per Push versendet werden. Bitte erlaube diese im nächsten Schritt.", "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.") }
     var onboardingAllowButton: String { t("Erlauben & Loslegen", "Allow & Start") }
     var onboardingSkipButton: String { t("Später / Überspringen", "Later / Skip") }
     var todayTitle: String { t("Heute", "Today") }
+    var heatWarningLevelLabel: String { t("Hitzewarnstufe", "Heat warning level") }
+    var uvWarningBadge67: String { t("UV-Warnung 6-7", "UV Warning 6-7") }
+    var uvWarningBadge810: String { t("UV-Warnung 8-10", "UV Warning 8-10") }
+    var uvWarningBadge11Plus: String { t("UV-Warnung >= 11", "UV Warning >= 11") }
+    var uvWarningDetail67: String { t("Direkte Sonne zwischen 11:00 und 15:00 Uhr auf max. 2 Stunden begrenzen, sonst Schatten oder Indoor.", "Limit direct sun exposure between 11:00 and 15:00 to max. 2 hours, otherwise shade or indoors.") }
+    var uvWarningDetail67OutsideWindow: String { t("Erhöhte UV-Belastung heute: Schutzkleidung, Kopfbedeckung, Sonnenbrille und Sonnencreme konsequent verwenden.", "Increased UV exposure today: consistently use protective clothing, head covering, sunglasses, and sunscreen.") }
+    var uvWarningDetail810: String { t("Direkte Sonne zwischen 11:00 und 15:00 Uhr auf max. 1 Stunde begrenzen, sonst Schatten oder Indoor.", "Limit direct sun exposure between 11:00 and 15:00 to max. 1 hour, otherwise shade or indoors.") }
+    var uvWarningDetail810OutsideWindow: String { t("Hohe UV-Belastung heute: Schutzmaßnahmen konsequent umsetzen und Arbeiten bevorzugt in den Schatten verlagern.", "High UV exposure today: apply protective measures consistently and prioritize work in shade.") }
+    var uvWarningDetail11Plus: String { t("UV-Index >= 11 wurde im österreichischen Flachland bisher nicht gemessen. Falls gemeldet: direkte Sonne vermeiden, nur mit maximalem Schutz arbeiten.", "UV index >= 11 has not been measured in Austrian lowland regions so far. If reported: avoid direct sun and work only with maximum protection.") }
 
     func weekdayShort(_ weekday: Int) -> String {
         switch weekday {
@@ -879,10 +1117,56 @@ struct Copybook {
         switch language {
         case .system:
             return t("Auto", "Auto")
+        case .bg:
+            return "BG"
+        case .da:
+            return "DA"
         case .de:
             return "DE"
         case .en:
             return "EN"
+        case .et:
+            return "ET"
+        case .fi:
+            return "FI"
+        case .fr:
+            return "FR"
+        case .el:
+            return "EL"
+        case .ga:
+            return "GA"
+        case .it:
+            return "IT"
+        case .hr:
+            return "HR"
+        case .lv:
+            return "LV"
+        case .lt:
+            return "LT"
+        case .mt:
+            return "MT"
+        case .nl:
+            return "NL"
+        case .pl:
+            return "PL"
+        case .pt:
+            return "PT"
+        case .ro:
+            return "RO"
+        case .sv:
+            return "SV"
+        case .sk:
+            return "SK"
+        case .sl:
+            return "SL"
+        case .es:
+            return "ES"
+        case .cs:
+            return "CS"
+        case .hu:
+            return "HU"
+        case .tr:
+            return "TR"
         }
     }
 
@@ -890,10 +1174,56 @@ struct Copybook {
         switch language {
         case .system:
             return t("Systemsprache", "System language")
+        case .bg:
+            return t("Bulgarisch", "Bulgarian")
+        case .da:
+            return t("Dänisch", "Danish")
         case .de:
             return t("Deutsch", "German")
         case .en:
             return t("Englisch", "English")
+        case .et:
+            return t("Estnisch", "Estonian")
+        case .fi:
+            return t("Finnisch", "Finnish")
+        case .fr:
+            return t("Französisch", "French")
+        case .el:
+            return t("Griechisch", "Greek")
+        case .ga:
+            return t("Irisch", "Irish")
+        case .it:
+            return t("Italienisch", "Italian")
+        case .hr:
+            return t("Kroatisch", "Croatian")
+        case .lv:
+            return t("Lettisch", "Latvian")
+        case .lt:
+            return t("Litauisch", "Lithuanian")
+        case .mt:
+            return t("Maltesisch", "Maltese")
+        case .nl:
+            return t("Niederländisch", "Dutch")
+        case .pl:
+            return t("Polnisch", "Polish")
+        case .pt:
+            return t("Portugiesisch", "Portuguese")
+        case .ro:
+            return t("Rumänisch", "Romanian")
+        case .sv:
+            return t("Schwedisch", "Swedish")
+        case .sk:
+            return t("Slowakisch", "Slovak")
+        case .sl:
+            return t("Slowenisch", "Slovenian")
+        case .es:
+            return t("Spanisch", "Spanish")
+        case .cs:
+            return t("Tschechisch", "Czech")
+        case .hu:
+            return t("Ungarisch", "Hungarian")
+        case .tr:
+            return t("Türkisch", "Turkish")
         }
     }
 
@@ -941,6 +1271,188 @@ struct Copybook {
     func copyrightLine(year: Int) -> String {
         "© \(year) SFK Robert Lembacher und Dr. Thomas Entner"
     }
+
+    private static let translations: [ResolvedLanguage: [String: String]] = [
+        .bg: [
+            "Settings": "Настройки",
+            "Language": "Език",
+            "Appearance": "Външен вид",
+            "Info & Legal": "Информация и правна информация",
+            "Development": "Разработка",
+            "System": "Система",
+            "Light": "Светъл",
+            "Dark": "Тъмен",
+            "Close": "Затвори",
+            "Cancel": "Отказ",
+            "Refresh data": "Обновяване",
+            "Create New Workplace": "Създаване на ново работно място",
+            "Delete workplace": "Изтриване на работно място",
+            "Workplaces": "Работни места",
+            "Warnings": "Предупреждения",
+            "Current Risk": "Текущ риск",
+            "Peak UV": "Пик UV",
+            "Today": "Днес"
+        ],
+        .da: [
+            "Settings": "Indstillinger",
+            "Language": "Sprog",
+            "Appearance": "Udseende",
+            "Info & Legal": "Info og jura",
+            "Development": "Udvikling",
+            "System": "System",
+            "Light": "Lys",
+            "Dark": "Mørk",
+            "Close": "Luk",
+            "Cancel": "Annuller",
+            "Refresh data": "Opdater",
+            "Create New Workplace": "Opret ny arbejdsplads",
+            "Delete workplace": "Slet arbejdsplads",
+            "Workplaces": "Arbejdspladser",
+            "Warnings": "Advarsler",
+            "Current Risk": "Aktuel risiko",
+            "Peak UV": "Højeste UV",
+            "Today": "I dag"
+        ],
+        .et: ["Settings": "Seaded", "Language": "Keel"],
+        .fi: ["Settings": "Asetukset", "Language": "Kieli"],
+        .fr: ["Settings": "Paramètres", "Language": "Langue", "Close": "Fermer", "Cancel": "Annuler", "Today": "Aujourd'hui"],
+        .el: ["Settings": "Ρυθμίσεις", "Language": "Γλώσσα"],
+        .ga: ["Settings": "Socruithe", "Language": "Teanga"],
+        .it: ["Settings": "Impostazioni", "Language": "Lingua", "Close": "Chiudi", "Cancel": "Annulla", "Today": "Oggi"],
+        .hr: ["Settings": "Postavke", "Language": "Jezik"],
+        .lv: ["Settings": "Iestatījumi", "Language": "Valoda"],
+        .lt: ["Settings": "Nustatymai", "Language": "Kalba"],
+        .mt: ["Settings": "Settings", "Language": "Lingwa"],
+        .nl: ["Settings": "Instellingen", "Language": "Taal", "Close": "Sluiten", "Cancel": "Annuleren", "Today": "Vandaag"],
+        .pl: ["Settings": "Ustawienia", "Language": "Język"],
+        .pt: ["Settings": "Definições", "Language": "Idioma"],
+        .ro: ["Settings": "Setări", "Language": "Limbă"],
+        .sv: ["Settings": "Inställningar", "Language": "Språk", "Close": "Stäng", "Cancel": "Avbryt", "Today": "I dag"],
+        .sk: ["Settings": "Nastavenia", "Language": "Jazyk"],
+        .sl: ["Settings": "Nastavitve", "Language": "Jezik"],
+        .es: ["Settings": "Ajustes", "Language": "Idioma", "Close": "Cerrar", "Cancel": "Cancelar", "Today": "Hoy"],
+        .cs: ["Settings": "Nastavení", "Language": "Jazyk"],
+        .hu: ["Settings": "Beállítások", "Language": "Nyelv"],
+        .tr: ["Settings": "Ayarlar", "Language": "Dil", "Close": "Kapat", "Cancel": "İptal", "Today": "Bugün"]
+    ]
+
+    private static let longTextTranslations: [ResolvedLanguage: [String: String]] = [
+        .bg: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Помагаме ви да спазвате законовите изисквания за рисковете от жега и естествено UV лъчение при работа на открито. Следете постоянно температурите и UV индекса.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "За да ви предупреждаваме навреме за опасни нива на жега на работните ви места, ни е нужно разрешение за push известия. Моля, разрешете ги в следващата стъпка.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Най-високият UV индекс за деня определя UV натоварването. В Австрия от април до септември между 11:00 и 15:00 обикновено се очаква UV индекс >= 5."
+        ],
+        .da: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Vi hjælper dig med at overholde lovkrav om farer fra varme og naturlig UV-stråling ved udendørs arbejde. Hold altid øje med temperaturer og UV-indeks.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "For at vi kan advare dig i tide om farlige varmeniveauer på dine arbejdspladser, har vi brug for din tilladelse til push-notifikationer. Tillad dem i næste trin.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Dagens højeste UV-indeks bestemmer UV-belastningen. I Østrig forventes der fra april til september normalt et UV-indeks >= 5 mellem kl. 11:00 og 15:00."
+        ],
+        .et: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Aitame sul täita õigusnõudeid, mis puudutavad kuumuse ja loodusliku UV-kiirguse ohte välitöödel. Hoia temperatuuridel ja UV-indeksil alati silm peal.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Et saaksime sind töökohtade ohtlikest kuumatasemetest õigel ajal hoiatada, vajame push-teavituste luba. Luba need järgmises sammus.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Päeva kõrgeim UV-indeks määrab UV-koormuse. Austrias on aprillist septembrini ajavahemikus 11:00–15:00 tavaliselt oodata UV-indeksit >= 5."
+        ],
+        .fi: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Autamme sinua noudattamaan lakisääteisiä vaatimuksia, jotka koskevat kuumuuden ja luonnollisen UV-säteilyn riskejä ulkotyössä. Seuraa lämpötiloja ja UV-indeksiä jatkuvasti.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Jotta voimme varoittaa sinua ajoissa vaarallisista kuumuustasoista työpaikoillasi, tarvitsemme luvan push-ilmoituksiin. Salli ne seuraavassa vaiheessa.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Päivän korkein UV-indeksi määrittää UV-altistuksen. Itävallassa huhti-syyskuussa UV-indeksi >= 5 on yleensä odotettavissa klo 11:00–15:00."
+        ],
+        .fr: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Nous vous aidons à respecter les exigences légales liées aux risques de chaleur et de rayonnement UV naturel lors du travail en extérieur. Gardez toujours un œil sur les températures et l'indice UV.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Afin de vous avertir à temps des niveaux de chaleur dangereux sur vos lieux de travail, nous avons besoin de votre autorisation pour les notifications push. Veuillez les autoriser à l'étape suivante.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "L'indice UV maximal de la journée détermine l'exposition aux UV. En Autriche, d'avril à septembre, un indice UV >= 5 est généralement attendu entre 11h00 et 15h00."
+        ],
+        .el: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Σας βοηθάμε να συμμορφώνεστε με τις νομικές απαιτήσεις σχετικά με τους κινδύνους από τη ζέστη και τη φυσική υπεριώδη ακτινοβολία στην υπαίθρια εργασία. Παρακολουθείτε πάντα τη θερμοκρασία και τον δείκτη UV.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Για να σας προειδοποιούμε έγκαιρα για επικίνδυνα επίπεδα ζέστης στους χώρους εργασίας σας, χρειαζόμαστε την άδειά σας για push ειδοποιήσεις. Επιτρέψτε τις στο επόμενο βήμα.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Ο υψηλότερος δείκτης UV της ημέρας καθορίζει την έκθεση στην υπεριώδη ακτινοβολία. Στην Αυστρία, από Απρίλιο έως Σεπτέμβριο, αναμένεται συνήθως δείκτης UV >= 5 μεταξύ 11:00 και 15:00."
+        ],
+        .ga: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Cabhraímid leat riachtanais dhlíthiúla maidir le rioscaí ó theas agus radaíocht UV nádúrtha in obair lasmuigh a chomhlíonadh. Coinnigh súil ar theocht agus ar an innéacs UV i gcónaí.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Chun rabhadh tráthúil a thabhairt duit faoi leibhéil dainséaracha teasa ag d'ionaid oibre, teastaíonn cead uainn le haghaidh fógraí brú. Ceadaigh iad sa chéad chéim eile.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Cinneann an t-innéacs UV is airde den lá an nochtadh UV. San Ostair, ó Aibreán go Meán Fómhair, bíonn innéacs UV >= 5 le súil de ghnáth idir 11:00 agus 15:00."
+        ],
+        .it: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Ti aiutiamo a rispettare i requisiti legali relativi ai rischi da calore e radiazione UV naturale per il lavoro all'aperto. Tieni sempre sotto controllo temperature e indice UV.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Per avvisarti in tempo sui livelli di calore pericolosi nei tuoi luoghi di lavoro, abbiamo bisogno della tua autorizzazione per le notifiche push. Consentile nel passaggio successivo.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "L'indice UV massimo della giornata determina l'esposizione ai raggi UV. In Austria, da aprile a settembre, tra le 11:00 e le 15:00 è generalmente previsto un indice UV >= 5."
+        ],
+        .hr: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Pomažemo vam uskladiti se sa zakonskim zahtjevima vezanim uz opasnosti od vrućine i prirodnog UV zračenja pri radu na otvorenom. Uvijek pratite temperaturu i UV indeks.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Kako bismo vas na vrijeme upozorili na opasne razine vrućine na vašim radnim mjestima, trebamo vaše dopuštenje za push obavijesti. Molimo omogućite ih u sljedećem koraku.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Najviši dnevni UV indeks određuje izloženost UV zračenju. U Austriji se od travnja do rujna između 11:00 i 15:00 obično očekuje UV indeks >= 5."
+        ],
+        .lv: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Mēs palīdzam ievērot juridiskās prasības attiecībā uz karstuma un dabiskā UV starojuma riskiem āra darbā. Vienmēr sekojiet temperatūrai un UV indeksam.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Lai mēs varētu savlaicīgi brīdināt par bīstamu karstuma līmeni jūsu darba vietās, mums nepieciešama atļauja push paziņojumiem. Lūdzu, atļaujiet tos nākamajā solī.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Dienas augstākais UV indekss nosaka UV slodzi. Austrijā no aprīļa līdz septembrim laikā no 11:00 līdz 15:00 parasti gaidāms UV indekss >= 5."
+        ],
+        .lt: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Padedame laikytis teisinių reikalavimų dėl karščio ir natūralios UV spinduliuotės pavojų dirbant lauke. Visada stebėkite temperatūrą ir UV indeksą.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Kad galėtume laiku įspėti apie pavojingą karščio lygį jūsų darbo vietose, mums reikia leidimo siųsti push pranešimus. Prašome juos leisti kitame žingsnyje.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Didžiausias dienos UV indeksas lemia UV poveikį. Austrijoje nuo balandžio iki rugsėjo tarp 11:00 ir 15:00 paprastai tikimasi UV indekso >= 5."
+        ],
+        .mt: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Ngħinuk tikkonforma mar-rekwiżiti legali dwar ir-riskji mis-sħana u r-radjazzjoni UV naturali fix-xogħol barra. Żomm għajnejk fuq it-temperaturi u l-indiċi UV il-ħin kollu.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Biex inwissuk fil-ħin dwar livelli perikolużi ta' sħana fil-postijiet tax-xogħol tiegħek, għandna bżonn il-permess tiegħek għan-notifiki push. Jekk jogħġbok ippermettilhom fil-pass li jmiss.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "L-ogħla indiċi UV tal-jum jiddetermina l-espożizzjoni UV. Fl-Awstrija, minn April sa Settembru, normalment ikun mistenni indiċi UV >= 5 bejn 11:00 u 15:00."
+        ],
+        .nl: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "We helpen je te voldoen aan wettelijke eisen rond risico's door hitte en natuurlijke UV-straling bij buitenwerk. Houd temperaturen en UV-index altijd in de gaten.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Om je op tijd te waarschuwen voor gevaarlijke hitteniveaus op je werkplekken, hebben we toestemming nodig voor pushmeldingen. Sta die toe in de volgende stap.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "De hoogste UV-index van de dag bepaalt de UV-belasting. In Oostenrijk wordt van april tot september tussen 11:00 en 15:00 meestal een UV-index >= 5 verwacht."
+        ],
+        .pl: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Pomagamy spełniać wymogi prawne dotyczące zagrożeń związanych z upałem i naturalnym promieniowaniem UV przy pracy na zewnątrz. Zawsze monitoruj temperaturę i indeks UV.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Abyśmy mogli na czas ostrzegać o niebezpiecznych poziomach upału w Twoich miejscach pracy, potrzebujemy zgody na powiadomienia push. Włącz je w następnym kroku.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Najwyższy dzienny indeks UV określa ekspozycję na UV. W Austrii od kwietnia do września między 11:00 a 15:00 zwykle oczekuje się indeksu UV >= 5."
+        ],
+        .pt: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Ajudamos a cumprir os requisitos legais relativos aos perigos do calor e da radiação UV natural no trabalho ao ar livre. Acompanhe sempre as temperaturas e o índice UV.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Para o avisarmos a tempo sobre níveis perigosos de calor nos seus locais de trabalho, precisamos da sua permissão para notificações push. Permita-as no próximo passo.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "O índice UV mais elevado do dia determina a exposição UV. Na Áustria, de abril a setembro, normalmente espera-se um índice UV >= 5 entre as 11:00 e as 15:00."
+        ],
+        .ro: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Te ajutăm să respecți cerințele legale privind riscurile de căldură și radiație UV naturală la munca în aer liber. Urmărește permanent temperaturile și indicele UV.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Pentru a te avertiza la timp despre niveluri periculoase de căldură la locurile tale de muncă, avem nevoie de permisiunea pentru notificări push. Te rugăm să le permiți la pasul următor.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Cel mai mare indice UV al zilei determină expunerea la UV. În Austria, din aprilie până în septembrie, între 11:00 și 15:00 se așteaptă de obicei un indice UV >= 5."
+        ],
+        .sv: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Vi hjälper dig att uppfylla lagkrav kring risker från värme och naturlig UV-strålning vid utomhusarbete. Håll alltid koll på temperaturer och UV-index.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "För att vi ska kunna varna dig i tid om farliga värmenivåer på dina arbetsplatser behöver vi ditt tillstånd för pushnotiser. Tillåt dem i nästa steg.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Dagens högsta UV-index bestämmer UV-belastningen. I Österrike förväntas från april till september vanligtvis ett UV-index >= 5 mellan 11:00 och 15:00."
+        ],
+        .sk: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Pomáhame vám dodržiavať zákonné požiadavky týkajúce sa rizík z tepla a prirodzeného UV žiarenia pri práci vonku. Neustále sledujte teploty a UV index.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Aby sme vás mohli včas upozorniť na nebezpečné úrovne tepla na vašich pracoviskách, potrebujeme váš súhlas s push notifikáciami. Povoľte ich v ďalšom kroku.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Najvyšší UV index dňa určuje UV záťaž. V Rakúsku sa od apríla do septembra medzi 11:00 a 15:00 zvyčajne očakáva UV index >= 5."
+        ],
+        .sl: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Pomagamo vam izpolnjevati zakonske zahteve glede nevarnosti vročine in naravnega UV sevanja pri delu na prostem. Vedno spremljajte temperature in UV indeks.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Da vas lahko pravočasno opozorimo na nevarne ravni vročine na vaših delovnih mestih, potrebujemo vaše dovoljenje za push obvestila. Omogočite jih v naslednjem koraku.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Najvišji dnevni UV indeks določa UV obremenitev. V Avstriji je od aprila do septembra med 11:00 in 15:00 običajno pričakovan UV indeks >= 5."
+        ],
+        .es: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Te ayudamos a cumplir los requisitos legales sobre riesgos por calor y radiación UV natural en trabajos al aire libre. Mantén siempre bajo control las temperaturas y el índice UV.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Para poder avisarte a tiempo sobre niveles peligrosos de calor en tus lugares de trabajo, necesitamos tu permiso para notificaciones push. Permítelas en el siguiente paso.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "El índice UV más alto del día determina la exposición a UV. En Austria, de abril a septiembre, normalmente se espera un índice UV >= 5 entre las 11:00 y las 15:00."
+        ],
+        .cs: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Pomáháme vám dodržovat zákonné požadavky týkající se rizik z horka a přirozeného UV záření při práci venku. Neustále sledujte teploty a UV index.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Abychom vás mohli včas varovat před nebezpečnými úrovněmi horka na vašich pracovištích, potřebujeme vaše povolení k push oznámením. Povolte je v dalším kroku.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Nejvyšší denní UV index určuje UV zátěž. V Rakousku se od dubna do září mezi 11:00 a 15:00 obvykle očekává UV index >= 5."
+        ],
+        .hu: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Segítünk megfelelni a szabadtéri munkát érintő hő- és természetes UV-sugárzási kockázatokra vonatkozó jogi követelményeknek. Mindig figyeld a hőmérsékletet és az UV-indexet.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Ahhoz, hogy időben figyelmeztethessünk a munkahelyeiden jelentkező veszélyes hőszintekre, engedélyre van szükségünk a push értesítésekhez. Kérjük, engedélyezd a következő lépésben.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "A napi legmagasabb UV-index határozza meg az UV-terhelést. Ausztriában áprilistól szeptemberig 11:00 és 15:00 között általában >= 5 UV-index várható."
+        ],
+        .tr: [
+            "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.": "Açık havada çalışma sırasında ısı ve doğal UV ışınımı risklerine ilişkin yasal gerekliliklere uymanıza yardımcı oluyoruz. Sıcaklıkları ve UV indeksini her zaman takip edin.",
+            "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Çalışma alanlarınızdaki tehlikeli sıcaklık seviyeleri hakkında sizi zamanında uyarabilmemiz için push bildirimlerine izin vermeniz gerekir. Lütfen bir sonraki adımda izin verin.",
+            "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00.": "Günün en yüksek UV indeksi UV maruziyetini belirler. Avusturya'da Nisan-Eylül arasında 11:00-15:00 saatleri arasında genellikle UV indeksi >= 5 beklenir."
+        ]
+    ]
 }
 
 private extension HazardSeverity {
