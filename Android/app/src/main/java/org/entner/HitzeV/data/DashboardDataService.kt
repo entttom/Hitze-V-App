@@ -16,6 +16,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.entner.HitzeV.config.AppFeatureFlags
 import org.entner.HitzeV.model.DailyForecast
 import org.entner.HitzeV.model.GeoCoordinate
 import org.entner.HitzeV.model.HazardSeverity
@@ -81,7 +82,11 @@ class DashboardDataService(
     }
 
     private suspend fun fetchGeoSphere(coordinate: GeoCoordinate): ResolvedMunicipality {
-        val geosphereBaseUrl = appStorage.customGeoSphereUrl.first().ifBlank { defaultGeosphereBaseUrl }
+        val geosphereBaseUrl = if (AppFeatureFlags.enableCustomGeoSphereUrlSetting) {
+            appStorage.customGeoSphereUrl.first().ifBlank { defaultGeosphereBaseUrl }
+        } else {
+            defaultGeosphereBaseUrl
+        }
         val url = "$geosphereBaseUrl?lat=${coordinate.latitude.asQueryValue()}&lon=${coordinate.longitude.asQueryValue()}"
         val root = performGet(url)
 

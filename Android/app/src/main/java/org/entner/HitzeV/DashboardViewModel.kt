@@ -159,6 +159,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setCustomGeoSphereUrl(url: String) {
+        if (!AppFeatureFlags.enableCustomGeoSphereUrlSetting) return
         viewModelScope.launch {
             appStorage.saveCustomGeoSphereUrl(url)
         }
