@@ -44,6 +44,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun refreshAll() {
         val worksites = _uiState.value.worksites
+        val languageCode = _uiState.value.appLanguage.resolvedLanguage().code
         if (_uiState.value.isRefreshing) return
 
         viewModelScope.launch {
@@ -59,7 +60,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     .onFailure { }
             }
 
-            subscriptionManager.syncTopics(worksites.map(Worksite::coordinate))
+            subscriptionManager.syncTopics(worksites.map(Worksite::coordinate), languageCode)
 
             _uiState.update {
                 it.copy(
@@ -129,9 +130,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val updatedWorksites = _uiState.value.worksites.filterNot { it.id == id }
             val updatedSnapshots = _uiState.value.snapshots - id
+            val languageCode = _uiState.value.appLanguage.resolvedLanguage().code
             appStorage.saveWorksites(updatedWorksites)
 
-            subscriptionManager.syncTopics(updatedWorksites.map(Worksite::coordinate))
+            subscriptionManager.syncTopics(updatedWorksites.map(Worksite::coordinate), languageCode)
 
             _uiState.update {
                 it.copy(
@@ -150,6 +152,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     fun setLanguage(language: AppLanguage) {
         viewModelScope.launch {
             appStorage.saveAppLanguage(language)
+            val worksites = _uiState.value.worksites
+            val languageCode = language.resolvedLanguage().code
+            subscriptionManager.syncTopics(worksites.map(Worksite::coordinate), languageCode)
         }
     }
 

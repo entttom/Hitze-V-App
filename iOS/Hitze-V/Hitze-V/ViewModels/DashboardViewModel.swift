@@ -117,7 +117,10 @@ final class DashboardViewModel: ObservableObject {
 
         snapshots = nextSnapshots
 
-        await subscriptionManager.syncTopics(for: worksites.map(\.coordinate))
+        await subscriptionManager.syncTopics(
+            for: worksites.map(\.coordinate),
+            languageCode: currentPushLanguageCode()
+        )
         if let error = subscriptionManager.lastError?.errorDescription {
             NSLog("Subscription sync failed: %@", error)
         }
@@ -228,7 +231,10 @@ final class DashboardViewModel: ObservableObject {
 
         persistWorksites()
 
-        await subscriptionManager.syncTopics(for: worksites.map(\.coordinate))
+        await subscriptionManager.syncTopics(
+            for: worksites.map(\.coordinate),
+            languageCode: currentPushLanguageCode()
+        )
     }
 
     func deleteWorksite(id: UUID) async {
@@ -237,6 +243,13 @@ final class DashboardViewModel: ObservableObject {
         }
 
         await deleteWorksites(at: IndexSet(integer: index))
+    }
+
+    func resyncSubscriptionsForCurrentLanguage() async {
+        await subscriptionManager.syncTopics(
+            for: worksites.map(\.coordinate),
+            languageCode: currentPushLanguageCode()
+        )
     }
 
     private func mapAddressResults(from mapItems: [MKMapItem]) -> [AddressSearchResult] {
@@ -310,6 +323,12 @@ final class DashboardViewModel: ObservableObject {
         }
 
         return true
+    }
+
+    private func currentPushLanguageCode() -> String {
+        let storedValue = userDefaults.string(forKey: "dashboard.language")
+        let selectedLanguage = AppLanguage(rawValue: storedValue ?? AppLanguage.system.rawValue) ?? .system
+        return selectedLanguage.resolvedLanguage.languageCode
     }
 }
 

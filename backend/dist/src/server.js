@@ -23,6 +23,23 @@ function isAuthorized(req) {
     const header = req.header("authorization") ?? "";
     return header === `Bearer ${cronSecret}`;
 }
+function parseLanguageFromBody(rawValue) {
+    if (rawValue === undefined || rawValue === null) {
+        return { ok: true, value: undefined };
+    }
+    if (typeof rawValue !== "string") {
+        return { ok: false, message: "lang must be a string when provided." };
+    }
+    const trimmed = rawValue.trim();
+    if (!trimmed) {
+        return { ok: true, value: undefined };
+    }
+    const parsed = (0, hitze_1.parseSupportedPushLanguage)(trimmed);
+    if (!parsed) {
+        return { ok: false, message: `Unsupported lang '${trimmed}'.` };
+    }
+    return { ok: true, value: parsed };
+}
 app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true });
 });
@@ -51,8 +68,9 @@ app.get("/cron/hitze", async (req, res) => {
     }
     res.status(result.status).json(result.body);
 });
-function renderTestPushPage(municipalities) {
+function renderTestPushPage(municipalities, supportedLanguages) {
     const municipalityPayload = JSON.stringify(municipalities).replace(/</g, "\\u003c");
+    const languagePayload = JSON.stringify(supportedLanguages).replace(/</g, "\\u003c");
     return `<!doctype html>
 <html lang="de">
   <head>
@@ -140,6 +158,7 @@ function renderTestPushPage(municipalities) {
       }
 
       input[type="text"],
+      select,
       textarea {
         width: 100%;
         border: 1px solid var(--line);
@@ -280,6 +299,11 @@ function renderTestPushPage(municipalities) {
             <textarea id="body">Dies ist eine manuelle Testnachricht vom Backend.</textarea>
           </label>
 
+          <label>
+            Sprache
+            <select id="lang"></select>
+          </label>
+
           <div class="summary" id="summary"></div>
 
           <div class="button-row">
@@ -317,10 +341,12 @@ function renderTestPushPage(municipalities) {
 
     <script>
       const municipalities = ${municipalityPayload};
+      const supportedLanguages = ${languagePayload};
       const selectedIds = new Set();
 
       const titleInput = document.getElementById("title");
       const bodyInput = document.getElementById("body");
+      const languageSelect = document.getElementById("lang");
       const searchInput = document.getElementById("search");
       const municipalityList = document.getElementById("municipalityList");
       const summary = document.getElementById("summary");
@@ -330,6 +356,21 @@ function renderTestPushPage(municipalities) {
       const selectVisibleButton = document.getElementById("selectVisibleButton");
       const clearVisibleButton = document.getElementById("clearVisibleButton");
       const clearSelectionButton = document.getElementById("clearSelectionButton");
+
+      function selectedLanguage() {
+        const value = languageSelect.value || "de";
+        return supportedLanguages.includes(value) ? value : "de";
+      }
+
+      for (const languageCode of supportedLanguages) {
+        const option = document.createElement("option");
+        option.value = languageCode;
+        option.textContent = languageCode;
+        if (languageCode === "de") {
+          option.selected = true;
+        }
+        languageSelect.appendChild(option);
+      }
 
       function queryText() {
         return searchInput.value.trim().toLowerCase();
@@ -352,7 +393,8 @@ function renderTestPushPage(municipalities) {
 
       function updateSummary() {
         const filtered = filteredMunicipalities();
-        summary.textContent = selectedIds.size + " Empfänger ausgewählt";
+        summary.textContent =
+          selectedIds.size + " Empfaenger ausgewaehlt" + " · Sprache: " + selectedLanguage();
         meta.textContent = filtered.length + " sichtbar von " + municipalities.length + " Einträgen";
       }
 
@@ -388,7 +430,7 @@ function renderTestPushPage(municipalities) {
           const text = document.createElement("div");
           text.innerHTML =
             "<strong>" + municipality.municipalityId + " · " + municipality.name + "</strong>" +
-            "<small>Topic warngebiet_" + municipality.municipalityId + "</small>";
+            "<small>Topic warngebiet_" + municipality.municipalityId + "_" + selectedLanguage() + "</small>";
 
           label.appendChild(checkbox);
           label.appendChild(text);
@@ -402,6 +444,7 @@ function renderTestPushPage(municipalities) {
       }
 
       searchInput.addEventListener("input", render);
+      languageSelect.addEventListener("change", render);
 
       selectVisibleButton.addEventListener("click", () => {
         for (const municipality of filteredMunicipalities()) {
@@ -444,6 +487,7 @@ function renderTestPushPage(municipalities) {
               municipalityIds,
               title: titleInput.value,
               body: bodyInput.value,
+              lang: selectedLanguage(),
             }),
           });
 
@@ -479,12 +523,23 @@ if (developMode) {
         res.setHeader("Pragma", "no-cache");
         res.setHeader("Expires", "0");
         res.setHeader("Surrogate-Control", "no-store");
-        res.status(200).type("html").send(renderTestPushPage((0, hitze_1.listTestMunicipalityOptions)()));
+        res
+            .status(200)
+            .type("html")
+            .send(renderTestPushPage((0, hitze_1.listTestMunicipalityOptions)(), (0, hitze_1.listSupportedPushLanguages)()));
     });
     app.post("/test/push", async (req, res) => {
         const municipalityId = typeof req.body?.municipalityId === "string" ? req.body.municipalityId : "";
         const title = typeof req.body?.title === "string" ? req.body.title : undefined;
         const body = typeof req.body?.body === "string" ? req.body.body : undefined;
+        const parsedLang = parseLanguageFromBody(req.body?.lang);
+        if (!parsedLang.ok) {
+            res.status(400).json({
+                errorCode: "INVALID_INPUT",
+                message: parsedLang.message,
+            });
+            return;
+        }
         if (!municipalityId.trim()) {
             res.status(400).json({
                 errorCode: "INVALID_INPUT",
@@ -493,11 +548,17 @@ if (developMode) {
             return;
         }
         try {
-            const result = await (0, hitze_1.sendTestPushNotification)({ municipalityId, title, body });
+            const result = await (0, hitze_1.sendTestPushNotification)({
+                municipalityId,
+                title,
+                body,
+                languageCode: parsedLang.value,
+            });
             res.status(200).json({
                 ok: true,
                 municipalityId: municipalityId.trim(),
                 topic: result.topic,
+                lang: result.languageCode,
                 messageId: result.messageId,
             });
         }
@@ -515,6 +576,14 @@ if (developMode) {
         const municipalityIds = municipalityIdsRaw.filter((entry) => typeof entry === "string");
         const title = typeof req.body?.title === "string" ? req.body.title : undefined;
         const body = typeof req.body?.body === "string" ? req.body.body : undefined;
+        const parsedLang = parseLanguageFromBody(req.body?.lang);
+        if (!parsedLang.ok) {
+            res.status(400).json({
+                errorCode: "INVALID_INPUT",
+                message: parsedLang.message,
+            });
+            return;
+        }
         if (municipalityIds.length === 0) {
             res.status(400).json({
                 errorCode: "INVALID_INPUT",
@@ -523,9 +592,15 @@ if (developMode) {
             return;
         }
         try {
-            const result = await (0, hitze_1.sendTestPushNotifications)({ municipalityIds, title, body });
+            const result = await (0, hitze_1.sendTestPushNotifications)({
+                municipalityIds,
+                title,
+                body,
+                languageCode: parsedLang.value,
+            });
             res.status(200).json({
                 ok: true,
+                lang: parsedLang.value,
                 sentCount: result.sent.length,
                 recipients: result.sent,
             });
@@ -541,6 +616,14 @@ if (developMode) {
         const token = typeof req.body?.token === "string" ? req.body.token : "";
         const title = typeof req.body?.title === "string" ? req.body.title : undefined;
         const body = typeof req.body?.body === "string" ? req.body.body : undefined;
+        const parsedLang = parseLanguageFromBody(req.body?.lang);
+        if (!parsedLang.ok) {
+            res.status(400).json({
+                errorCode: "INVALID_INPUT",
+                message: parsedLang.message,
+            });
+            return;
+        }
         if (!token.trim()) {
             res.status(400).json({
                 errorCode: "INVALID_INPUT",
@@ -549,9 +632,15 @@ if (developMode) {
             return;
         }
         try {
-            const result = await (0, hitze_1.sendTestPushToToken)({ token, title, body });
+            const result = await (0, hitze_1.sendTestPushToToken)({
+                token,
+                title,
+                body,
+                languageCode: parsedLang.value,
+            });
             res.status(200).json({
                 ok: true,
+                lang: parsedLang.value,
                 tokenSuffix: result.token.slice(-10),
                 messageId: result.messageId,
             });

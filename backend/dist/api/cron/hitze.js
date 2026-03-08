@@ -36,6 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.parseSupportedPushLanguage = exports.normalizeSupportedPushLanguage = exports.listSupportedPushLanguages = void 0;
 exports.listTestMunicipalityOptions = listTestMunicipalityOptions;
 exports.sendTestPushNotification = sendTestPushNotification;
 exports.sendTestPushNotifications = sendTestPushNotifications;
@@ -48,6 +49,10 @@ const app_1 = require("firebase-admin/app");
 const messaging_1 = require("firebase-admin/messaging");
 const redis_1 = require("redis");
 const XLSX = __importStar(require("xlsx"));
+const pushLocalization_1 = require("./pushLocalization");
+Object.defineProperty(exports, "listSupportedPushLanguages", { enumerable: true, get: function () { return pushLocalization_1.listSupportedPushLanguages; } });
+Object.defineProperty(exports, "normalizeSupportedPushLanguage", { enumerable: true, get: function () { return pushLocalization_1.normalizeSupportedPushLanguage; } });
+Object.defineProperty(exports, "parseSupportedPushLanguage", { enumerable: true, get: function () { return pushLocalization_1.parseSupportedPushLanguage; } });
 const GEOSPHERE_WARNSTATUS_URL = "https://warnungen.zamg.at/wsapp/api/getWarnstatus";
 const REDIS_SIGNATURE_KEY = "hitze:v1:signatures";
 const REDIS_SEND_META_KEY = "hitze:v1:send_meta";
@@ -322,7 +327,7 @@ function aggregateTimeWindow(aggregate) {
         end: ends.length > 0 ? ends[ends.length - 1] : "",
     };
 }
-function formatPushTime(isoValue) {
+function formatPushTime(isoValue, languageCode) {
     if (!isoValue) {
         return "";
     }
@@ -330,7 +335,8 @@ function formatPushTime(isoValue) {
     if (Number.isNaN(parsed)) {
         return "";
     }
-    return new Intl.DateTimeFormat("de-AT", {
+    const localization = (0, pushLocalization_1.pushLocalizationFor)(languageCode);
+    return new Intl.DateTimeFormat(localization.localeTag, {
         timeZone: "Europe/Vienna",
         day: "2-digit",
         month: "2-digit",
@@ -340,7 +346,7 @@ function formatPushTime(isoValue) {
         hour12: false,
     }).format(new Date(parsed));
 }
-function formatPushClockTime(isoValue) {
+function formatPushClockTime(isoValue, languageCode) {
     if (!isoValue) {
         return "";
     }
@@ -348,7 +354,8 @@ function formatPushClockTime(isoValue) {
     if (Number.isNaN(parsed)) {
         return "";
     }
-    return new Intl.DateTimeFormat("de-AT", {
+    const localization = (0, pushLocalization_1.pushLocalizationFor)(languageCode);
+    return new Intl.DateTimeFormat(localization.localeTag, {
         timeZone: "Europe/Vienna",
         hour: "numeric",
         minute: "2-digit",
@@ -365,11 +372,12 @@ function dayKeyForIsoValue(isoValue) {
     }
     return currentDayKeyVienna(parsed);
 }
-function buildTimeWindowText(timeWindow) {
-    const startText = formatPushTime(timeWindow.start);
-    const endText = formatPushTime(timeWindow.end);
-    const startClockText = formatPushClockTime(timeWindow.start);
-    const endClockText = formatPushClockTime(timeWindow.end);
+function buildTimeWindowText(timeWindow, languageCode) {
+    const localization = (0, pushLocalization_1.pushLocalizationFor)(languageCode);
+    const startText = formatPushTime(timeWindow.start, languageCode);
+    const endText = formatPushTime(timeWindow.end, languageCode);
+    const startClockText = formatPushClockTime(timeWindow.start, languageCode);
+    const endClockText = formatPushClockTime(timeWindow.end, languageCode);
     const todayDayKey = currentDayKeyVienna();
     const startDayKey = dayKeyForIsoValue(timeWindow.start);
     const endDayKey = dayKeyForIsoValue(timeWindow.end);
@@ -378,34 +386,37 @@ function buildTimeWindowText(timeWindow) {
             endClockText &&
             startDayKey === todayDayKey &&
             endDayKey === todayDayKey) {
-            return `Heute von ${startClockText}-${endClockText} Uhr`;
+            return localization.formatTodayRange(startClockText, endClockText);
         }
-        return `Gueltig: ${startText} - ${endText}`;
+        return localization.formatValidRange(startText, endText);
     }
     if (startText) {
         if (startClockText && startDayKey === todayDayKey) {
-            return `Heute ab ${startClockText} Uhr`;
+            return localization.formatTodayFrom(startClockText);
         }
-        return `Ab: ${startText}`;
+        return localization.formatFrom(startText);
     }
     if (endText) {
         if (endClockText && endDayKey === todayDayKey) {
-            return `Heute bis ${endClockText} Uhr`;
+            return localization.formatTodayUntil(endClockText);
         }
-        return `Bis: ${endText}`;
+        return localization.formatUntil(endText);
     }
     return "";
 }
-function buildTimeWindowChangeText(previousTimeWindow, currentTimeWindow) {
-    const currentText = buildTimeWindowText(currentTimeWindow);
+function buildTimeWindowChangeText(previousTimeWindow, currentTimeWindow, languageCode) {
+    const localization = (0, pushLocalization_1.pushLocalizationFor)(languageCode);
+    const currentText = buildTimeWindowText(currentTimeWindow, languageCode);
     if (!currentText) {
         return "";
     }
-    const previousText = previousTimeWindow ? buildTimeWindowText(previousTimeWindow) : "";
+    const previousText = previousTimeWindow
+        ? buildTimeWindowText(previousTimeWindow, languageCode)
+        : "";
     if (previousText) {
-        return `Zeitfenster aktualisiert: von ${previousText} auf ${currentText}.`;
+        return localization.formatTimeWindowChanged(previousText, currentText);
     }
-    return `Aktualisiertes Zeitfenster: ${currentText}.`;
+    return localization.formatTimeWindowUpdated(currentText);
 }
 function municipalityListPaths() {
     return [
@@ -475,12 +486,13 @@ function loadMunicipalityNameMap() {
     municipalityNameById = map;
     return map;
 }
-function municipalityDisplayName(municipalityId) {
+function municipalityDisplayName(municipalityId, languageCode = pushLocalization_1.DEFAULT_PUSH_LANGUAGE) {
     const name = loadMunicipalityNameMap().get(municipalityId);
     if (name) {
         return name;
     }
-    return `Gemeinde ${municipalityId}`;
+    const localization = (0, pushLocalization_1.pushLocalizationFor)(languageCode);
+    return `${localization.municipalityLabel} ${municipalityId}`;
 }
 function getMinWarningLevel() {
     const raw = process.env.HITZE_MIN_LEVEL;
@@ -745,8 +757,8 @@ async function getRedisClient() {
     }
     return new RedisStateClient(redisClient);
 }
-function topicForMunicipality(municipalityId) {
-    return `warngebiet_${municipalityId}`;
+function topicForMunicipalityLanguage(municipalityId, languageCode) {
+    return `warngebiet_${municipalityId}_${languageCode}`;
 }
 function aggregateStateKey(aggregate) {
     return `${aggregate.kind}:${aggregate.municipalityId}`;
@@ -770,16 +782,17 @@ function dayKeyDaysAgoVienna(daysAgo) {
     const millisPerDay = 24 * 60 * 60 * 1000;
     return currentDayKeyVienna(Date.now() - daysAgo * millisPerDay);
 }
-function pushContentForWarning(aggregate, timeWindow, previousTimeWindow = null, timeWindowChanged = false) {
-    const name = municipalityDisplayName(aggregate.municipalityId);
-    const timeWindowText = buildTimeWindowText(timeWindow);
+function pushContentForWarning(aggregate, timeWindow, languageCode, previousTimeWindow = null, timeWindowChanged = false) {
+    const localization = (0, pushLocalization_1.pushLocalizationFor)(languageCode);
+    const name = municipalityDisplayName(aggregate.municipalityId, languageCode);
+    const timeWindowText = buildTimeWindowText(timeWindow, languageCode);
     const timeWindowChangeText = timeWindowChanged
-        ? buildTimeWindowChangeText(previousTimeWindow, timeWindow)
+        ? buildTimeWindowChangeText(previousTimeWindow, timeWindow, languageCode)
         : "";
     if (aggregate.kind === "cold") {
-        const bodyBase = `Achtung extreme Kälte in ${name}, Kälteschutz-Ausrüstung tragen.`;
+        const bodyBase = localization.buildColdBody(name);
         return {
-            title: "Kälte-Warnung",
+            title: localization.coldWarningTitle,
             body: timeWindowChangeText
                 ? `${bodyBase} ${timeWindowChangeText}`
                 : timeWindowText
@@ -788,9 +801,9 @@ function pushContentForWarning(aggregate, timeWindow, previousTimeWindow = null,
             collapsePrefix: "kaelte",
         };
     }
-    const bodyBase = `In ${name} wurde Warnstufe ${aggregate.maxLevel} erreicht. Hitzeschutzmaßnahmen nach Hitze-V umsetzen.`;
+    const bodyBase = localization.buildHeatBody(name, aggregate.maxLevel);
     return {
-        title: "Hitze-Warnung",
+        title: localization.heatWarningTitle,
         body: timeWindowChangeText
             ? `${bodyBase} ${timeWindowChangeText}`
             : timeWindowText
@@ -816,33 +829,35 @@ async function sendTestPushNotification(input) {
     if (!municipalityId) {
         throw new AppError(400, "INVALID_INPUT", "municipalityId is required.");
     }
-    const topic = topicForMunicipality(municipalityId);
+    const languageCode = (0, pushLocalization_1.normalizeSupportedPushLanguage)(input.languageCode);
+    const localization = (0, pushLocalization_1.pushLocalizationFor)(languageCode);
+    const topic = topicForMunicipalityLanguage(municipalityId, languageCode);
     const messaging = getFirebaseMessagingClient();
     const messageId = await messaging.send({
         topic,
         notification: {
-            title: input.title?.trim() || "Test: Hitze-Warnung",
-            body: input.body?.trim() ||
-                "Dies ist eine manuelle Testnachricht vom Backend.",
+            title: input.title?.trim() || localization.defaultTopicTestTitle,
+            body: input.body?.trim() || localization.defaultTopicTestBody,
         },
         data: {
             gemeindenr: municipalityId,
             source: "manual_test",
             warningLevel: "test",
+            languageCode,
         },
         apns: {
             headers: {
-                "apns-collapse-id": `test-hitze-${municipalityId}`,
+                "apns-collapse-id": `test-hitze-${municipalityId}-${languageCode}`,
             },
             payload: {
                 aps: {
                     sound: "default",
-                    "thread-id": `test-hitze-${municipalityId}`,
+                    "thread-id": `test-hitze-${municipalityId}-${languageCode}`,
                 },
             },
         },
     });
-    return { messageId, topic };
+    return { messageId, topic, languageCode };
 }
 async function sendTestPushNotifications(input) {
     const municipalityIds = Array.from(new Set(input.municipalityIds
@@ -857,6 +872,7 @@ async function sendTestPushNotifications(input) {
             municipalityId,
             title: input.title,
             body: input.body,
+            languageCode: input.languageCode,
         });
         sent.push({
             municipalityId,
@@ -872,24 +888,27 @@ async function sendTestPushToToken(input) {
         throw new AppError(400, "INVALID_INPUT", "token is required.");
     }
     const messaging = getFirebaseMessagingClient();
+    const languageCode = (0, pushLocalization_1.normalizeSupportedPushLanguage)(input.languageCode);
+    const localization = (0, pushLocalization_1.pushLocalizationFor)(languageCode);
     const messageId = await messaging.send({
         token,
         notification: {
-            title: input.title?.trim() || "Test: Hitze-Warnung (Token)",
-            body: input.body?.trim() || "Direkter Testversand an ein einzelnes Gerät.",
+            title: input.title?.trim() || localization.defaultTokenTestTitle,
+            body: input.body?.trim() || localization.defaultTokenTestBody,
         },
         data: {
             source: "manual_test_token",
             warningLevel: "test",
+            languageCode,
         },
         apns: {
             headers: {
-                "apns-collapse-id": "test-hitze-token",
+                "apns-collapse-id": `test-hitze-token-${languageCode}`,
             },
             payload: {
                 aps: {
                     sound: "default",
-                    "thread-id": "test-hitze-token",
+                    "thread-id": `test-hitze-token-${languageCode}`,
                 },
             },
         },
@@ -897,43 +916,58 @@ async function sendTestPushToToken(input) {
     return { messageId, token };
 }
 async function sendMunicipalityWarning(messaging, aggregate, previousTimeWindow = null, timeWindowChanged = false) {
-    const topic = topicForMunicipality(aggregate.municipalityId);
     const warningIds = Array.from(aggregate.warningIds).sort();
     const timeWindow = aggregateTimeWindow(aggregate);
-    const content = pushContentForWarning(aggregate, timeWindow, previousTimeWindow, timeWindowChanged);
-    const collapseId = `${content.collapsePrefix}-${aggregate.municipalityId}`;
-    const warningStartLocal = formatPushTime(timeWindow.start);
-    const warningEndLocal = formatPushTime(timeWindow.end);
-    await messaging.send({
-        topic,
-        notification: {
-            title: content.title,
-            body: content.body,
-        },
-        data: {
-            gemeindenr: aggregate.municipalityId,
-            gemeindename: municipalityDisplayName(aggregate.municipalityId),
-            warningKind: aggregate.kind,
-            warningLevel: String(aggregate.maxLevel),
-            warningIds: warningIds.join(","),
-            warningStart: timeWindow.start,
-            warningEnd: timeWindow.end,
-            warningStartLocal,
-            warningEndLocal,
-            source: "geosphere",
-        },
-        apns: {
-            headers: {
-                "apns-collapse-id": collapseId,
+    const sendResults = await Promise.allSettled(pushLocalization_1.SUPPORTED_PUSH_LANGUAGES.map(async (languageCode) => {
+        const topic = topicForMunicipalityLanguage(aggregate.municipalityId, languageCode);
+        const content = pushContentForWarning(aggregate, timeWindow, languageCode, previousTimeWindow, timeWindowChanged);
+        const collapseId = `${content.collapsePrefix}-${aggregate.municipalityId}-${languageCode}`;
+        const warningStartLocal = formatPushTime(timeWindow.start, languageCode);
+        const warningEndLocal = formatPushTime(timeWindow.end, languageCode);
+        await messaging.send({
+            topic,
+            notification: {
+                title: content.title,
+                body: content.body,
             },
-            payload: {
-                aps: {
-                    sound: "default",
-                    "thread-id": collapseId,
+            data: {
+                gemeindenr: aggregate.municipalityId,
+                gemeindename: municipalityDisplayName(aggregate.municipalityId, languageCode),
+                warningKind: aggregate.kind,
+                warningLevel: String(aggregate.maxLevel),
+                warningIds: warningIds.join(","),
+                warningStart: timeWindow.start,
+                warningEnd: timeWindow.end,
+                warningStartLocal,
+                warningEndLocal,
+                source: "geosphere",
+                languageCode,
+            },
+            apns: {
+                headers: {
+                    "apns-collapse-id": collapseId,
+                },
+                payload: {
+                    aps: {
+                        sound: "default",
+                        "thread-id": collapseId,
+                    },
                 },
             },
-        },
-    });
+        });
+    }));
+    const failedLanguages = sendResults
+        .map((result, index) => ({ result, languageCode: pushLocalization_1.SUPPORTED_PUSH_LANGUAGES[index] }))
+        .filter((entry) => entry.result.status === "rejected");
+    if (failedLanguages.length > 0) {
+        const details = failedLanguages.map((entry) => ({
+            languageCode: entry.languageCode,
+            error: entry.result.reason instanceof Error
+                ? entry.result.reason.message
+                : String(entry.result.reason),
+        }));
+        throw new AppError(500, "FCM_MULTILINGUAL_SEND_FAILED", `Push send failed for ${aggregate.municipalityId}: ${JSON.stringify(details)}`);
+    }
 }
 function mapError(error) {
     if (error instanceof AppError) {

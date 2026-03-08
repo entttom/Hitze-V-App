@@ -10,14 +10,21 @@ class SubscriptionManager(
     private val dashboardDataService: DashboardDataService,
     private val firebaseRegistrationManager: FirebaseRegistrationManager
 ) {
-    suspend fun syncTopics(coordinates: List<GeoCoordinate>): SubscriptionError? {
+    suspend fun syncTopics(coordinates: List<GeoCoordinate>, languageCode: String): SubscriptionError? {
+        val normalizedLanguageCode = normalizeLanguageCode(languageCode)
         val currentTopics = appStorage.subscribedMunicipalityIds.first()
+        val storedLanguageCode = appStorage.lastSubscribedLanguageCode.first()
+        val previousLanguageCode = storedLanguageCode ?: normalizedLanguageCode
+        val hasStoredLanguageCode = storedLanguageCode != null
         val errors = mutableListOf<SubscriptionError>()
 
         if (coordinates.isEmpty()) {
             val syncErrors = synchronizeTopics(
                 desiredMunicipalityIds = emptySet(),
                 currentTopics = currentTopics,
+                previousLanguageCode = previousLanguageCode,
+                desiredLanguageCode = normalizedLanguageCode,
+                hasStoredLanguageCode = hasStoredLanguageCode,
                 allowUnsubscribe = true
             )
             return applyErrors(syncErrors)
@@ -43,6 +50,9 @@ class SubscriptionManager(
         errors += synchronizeTopics(
             desiredMunicipalityIds = resolvedMunicipalityIds,
             currentTopics = currentTopics,
+            previousLanguageCode = previousLanguageCode,
+            desiredLanguageCode = normalizedLanguageCode,
+            hasStoredLanguageCode = hasStoredLanguageCode,
             allowUnsubscribe = errors.isEmpty()
         )
 
@@ -52,14 +62,31 @@ class SubscriptionManager(
     private suspend fun synchronizeTopics(
         desiredMunicipalityIds: Set<String>,
         currentTopics: Set<String>,
+        previousLanguageCode: String,
+        desiredLanguageCode: String,
+        hasStoredLanguageCode: Boolean,
         allowUnsubscribe: Boolean
     ): List<SubscriptionError> {
         val workingSet = currentTopics.toMutableSet()
         val errors = mutableListOf<SubscriptionError>()
-        val toSubscribe = desiredMunicipalityIds - workingSet
-        val toUnsubscribe = if (allowUnsubscribe) workingSet - desiredMunicipalityIds else emptySet()
+        val languageChanged = previousLanguageCode != desiredLanguageCode
+        val requiresTopicMigration = !hasStoredLanguageCode
+        val shouldResubscribeAll = languageChanged || requiresTopicMigration
+        val toSubscribe = if (shouldResubscribeAll) {
+            desiredMunicipalityIds
+        } else {
+            desiredMunicipalityIds - workingSet
+        }
+        val toUnsubscribe = if (allowUnsubscribe) {
+            if (shouldResubscribeAll) workingSet else (workingSet - desiredMunicipalityIds)
+        } else {
+            emptySet()
+        }
+        val shouldCleanupLegacyTopics =
+            allowUnsubscribe && previousLanguageCode == desiredLanguageCode && !hasStoredLanguageCode
+        val successfulTargetSubscriptions = mutableSetOf<String>()
 
-        if (toSubscribe.isNotEmpty() || toUnsubscribe.isNotEmpty()) {
+        if (toSubscribe.isNotEmpty() || toUnsubscribe.isNotEmpty() || shouldCleanupLegacyTopics) {
             try {
                 firebaseRegistrationManager.registerForPushNotificationsIfNeeded()
             } catch (error: FirebaseRegistrationError) {
@@ -69,23 +96,57 @@ class SubscriptionManager(
 
         toSubscribe.sorted().forEach { municipalityId ->
             runCatching {
-                FirebaseMessaging.getInstance().subscribeToTopic(topicName(municipalityId)).await()
+                FirebaseMessaging.getInstance()
+                    .subscribeToTopic(topicName(municipalityId, desiredLanguageCode))
+                    .await()
                 workingSet += municipalityId
+                successfulTargetSubscriptions += municipalityId
             }.onFailure { failure ->
-                errors += SubscriptionError.Firebase("FCM subscribe failed for ${topicName(municipalityId)}: ${failure.localizedMessage}")
+                errors += SubscriptionError.Firebase(
+                    "FCM subscribe failed for ${topicName(municipalityId, desiredLanguageCode)}: ${failure.localizedMessage}"
+                )
             }
         }
 
         toUnsubscribe.sorted().forEach { municipalityId ->
+            val shouldUnsubscribe = if (!shouldResubscribeAll) {
+                true
+            } else {
+                municipalityId !in desiredMunicipalityIds || municipalityId in successfulTargetSubscriptions
+            }
+
+            if (!shouldUnsubscribe) {
+                return@forEach
+            }
+
             runCatching {
-                FirebaseMessaging.getInstance().unsubscribeFromTopic(topicName(municipalityId)).await()
-                workingSet -= municipalityId
+                FirebaseMessaging.getInstance()
+                    .unsubscribeFromTopic(topicName(municipalityId, previousLanguageCode))
+                    .await()
+                if (municipalityId !in desiredMunicipalityIds) {
+                    workingSet -= municipalityId
+                }
             }.onFailure { failure ->
-                errors += SubscriptionError.Firebase("FCM unsubscribe failed for ${topicName(municipalityId)}: ${failure.localizedMessage}")
+                errors += SubscriptionError.Firebase(
+                    "FCM unsubscribe failed for ${topicName(municipalityId, previousLanguageCode)}: ${failure.localizedMessage}"
+                )
+            }
+        }
+
+        if (shouldCleanupLegacyTopics) {
+            workingSet.sorted().forEach { municipalityId ->
+                runCatching {
+                    FirebaseMessaging.getInstance().unsubscribeFromTopic(legacyTopicName(municipalityId)).await()
+                }.onFailure { failure ->
+                    errors += SubscriptionError.Firebase(
+                        "FCM legacy unsubscribe failed for ${legacyTopicName(municipalityId)}: ${failure.localizedMessage}"
+                    )
+                }
             }
         }
 
         appStorage.saveSubscribedMunicipalityIds(workingSet)
+        appStorage.saveLastSubscribedLanguageCode(desiredLanguageCode)
 
         if (workingSet.isEmpty()) {
             runCatching { firebaseRegistrationManager.deregisterFromFirebase() }
@@ -103,7 +164,12 @@ class SubscriptionManager(
         )
     }
 
-    private fun topicName(municipalityId: String): String = "warngebiet_$municipalityId"
+    private fun topicName(municipalityId: String, languageCode: String): String =
+        "warngebiet_${municipalityId}_${normalizeLanguageCode(languageCode)}"
+
+    private fun legacyTopicName(municipalityId: String): String = "warngebiet_$municipalityId"
+
+    private fun normalizeLanguageCode(value: String): String = value.trim().lowercase().ifEmpty { "en" }
 }
 
 sealed class SubscriptionError(message: String) : Exception(message) {

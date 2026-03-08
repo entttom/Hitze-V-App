@@ -106,6 +106,11 @@ struct ContentView: View {
             .refreshable {
                 await viewModel.refreshAll()
             }
+            .onChange(of: languageRawValue) { _ in
+                Task {
+                    await viewModel.resyncSubscriptionsForCurrentLanguage()
+                }
+            }
         }
         }
     }
@@ -988,6 +993,36 @@ enum ResolvedLanguage {
     case cs
     case hu
     case tr
+
+    var languageCode: String {
+        switch self {
+        case .de: return "de"
+        case .bg: return "bg"
+        case .da: return "da"
+        case .en: return "en"
+        case .et: return "et"
+        case .fi: return "fi"
+        case .fr: return "fr"
+        case .el: return "el"
+        case .ga: return "ga"
+        case .it: return "it"
+        case .hr: return "hr"
+        case .lv: return "lv"
+        case .lt: return "lt"
+        case .mt: return "mt"
+        case .nl: return "nl"
+        case .pl: return "pl"
+        case .pt: return "pt"
+        case .ro: return "ro"
+        case .sv: return "sv"
+        case .sk: return "sk"
+        case .sl: return "sl"
+        case .es: return "es"
+        case .cs: return "cs"
+        case .hu: return "hu"
+        case .tr: return "tr"
+        }
+    }
 }
 
 struct Copybook {

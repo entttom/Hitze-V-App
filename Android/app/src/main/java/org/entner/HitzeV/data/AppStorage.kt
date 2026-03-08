@@ -54,6 +54,10 @@ class AppStorage(context: Context) {
         preferences[Keys.customGeoSphereUrl]?.trim().orEmpty()
     }
 
+    val lastSubscribedLanguageCode: Flow<String?> = dataStore.safeData.map { preferences ->
+        preferences[Keys.lastSubscribedLanguageCode]?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+    }
+
     suspend fun saveWorksites(worksites: List<Worksite>) {
         dataStore.edit { preferences ->
             preferences[Keys.worksites] = json.encodeToString(worksites)
@@ -90,6 +94,12 @@ class AppStorage(context: Context) {
         }
     }
 
+    suspend fun saveLastSubscribedLanguageCode(languageCode: String) {
+        dataStore.edit { preferences ->
+            preferences[Keys.lastSubscribedLanguageCode] = languageCode.trim().lowercase()
+        }
+    }
+
     private val androidx.datastore.core.DataStore<Preferences>.safeData: Flow<Preferences>
         get() = data
             .catch { error ->
@@ -103,5 +113,6 @@ class AppStorage(context: Context) {
         val hasCompletedOnboarding = booleanPreferencesKey("hasCompletedOnboarding")
         val subscribedMunicipalityIds = stringSetPreferencesKey("subscription_manager.subscribedMunicipalityIDs")
         val customGeoSphereUrl = stringPreferencesKey("network.customGeoSphereUrl")
+        val lastSubscribedLanguageCode = stringPreferencesKey("subscription_manager.lastSubscribedLanguageCode")
     }
 }
