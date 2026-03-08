@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import FirebaseCore
 
 @main
 struct Hitze_VApp: App {
@@ -13,6 +14,12 @@ struct Hitze_VApp: App {
     @AppStorage("app.theme") private var themeRawValue = AppTheme.system.rawValue
     
     @State private var isShowingLaunchScreen = true
+
+    init() {
+        if FirebaseApp.app() == nil {
+            FirebaseApp.configure()
+        }
+    }
 
     var body: some Scene {
         WindowGroup {
