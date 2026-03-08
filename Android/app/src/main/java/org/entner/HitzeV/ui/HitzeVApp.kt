@@ -1341,56 +1341,66 @@ private fun InfoScreen(copy: Copybook, onClose: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                HeroSheetCard(title = copy.infoScreenHeatMeasuresTitle, body = copy.infoScreenHeatMeasuresSubtitle)
+                InfoGroupCard(
+                    title = copy.infoScreenHeatMeasuresTitle,
+                    entries = listOf(
+                        InfoLevelEntry(level = "2", title = copy.infoScreenLevel2Title, tint = AlertYellow),
+                        InfoLevelEntry(level = "3", title = copy.infoScreenLevel3Title, tint = AlertOrange),
+                        InfoLevelEntry(level = "4", title = copy.infoScreenLevel4Title, tint = AlertRed)
+                    )
+                )
             }
             item {
-                InfoCard(level = "2", tint = AlertYellow, title = copy.infoScreenLevel2Title, body = copy.infoScreenLevel2Body)
-            }
-            item {
-                InfoCard(level = "3", tint = AlertOrange, title = copy.infoScreenLevel3Title, body = copy.infoScreenLevel3Body)
-            }
-            item {
-                InfoCard(level = "4", tint = AlertRed, title = copy.infoScreenLevel4Title, body = copy.infoScreenLevel4Body)
-            }
-            item {
-                HeroSheetCard(title = copy.infoScreenUvMeasuresTitle, body = copy.infoScreenUvMeasuresSubtitle)
-            }
-            item {
-                InfoCard(level = "3-5", tint = AlertYellow, title = copy.infoScreenUvLevel35Title, body = copy.infoScreenUvLevel35Body)
-            }
-            item {
-                InfoCard(level = "6-7", tint = AlertOrange, title = copy.infoScreenUvLevel67Title, body = copy.infoScreenUvLevel67Body)
-            }
-            item {
-                InfoCard(level = "8-10", tint = AlertRed, title = copy.infoScreenUvLevel810Title, body = copy.infoScreenUvLevel810Body)
-            }
-            item {
-                InfoCard(level = ">=11", tint = Color(0xFF6B7280), title = copy.infoScreenUvLevel11Title, body = copy.infoScreenUvLevel11Body)
+                InfoGroupCard(
+                    title = copy.infoScreenUvMeasuresTitle,
+                    entries = listOf(
+                        InfoLevelEntry(level = "3-5", title = copy.infoScreenUvLevel35Title, tint = AlertYellow),
+                        InfoLevelEntry(level = "6-7", title = copy.infoScreenUvLevel67Title, tint = AlertOrange),
+                        InfoLevelEntry(level = "8-10", title = copy.infoScreenUvLevel810Title, tint = AlertRed),
+                        InfoLevelEntry(level = ">=11", title = copy.infoScreenUvLevel11Title, tint = Color(0xFF6B7280))
+                    )
+                )
             }
         }
     }
 }
 
 @Composable
-private fun InfoCard(level: String, tint: Color, title: String, body: String) {
+private fun InfoGroupCard(title: String, entries: List<InfoLevelEntry>) {
     FrostedCard {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(tint),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(level, color = ColorWhite, style = MaterialTheme.typography.labelLarge)
+            Text(title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onBackground)
+            entries.forEachIndexed { index, entry ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(entry.tint),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(entry.level, color = ColorWhite, style = MaterialTheme.typography.labelLarge)
+                    }
+                    Text(entry.title, style = MaterialTheme.typography.titleMedium, color = entry.tint)
                 }
-                Text(title, style = MaterialTheme.typography.titleMedium, color = tint)
+                if (index < entries.lastIndex) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f))
+                    )
+                }
             }
-            Text(body, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }
+
+private data class InfoLevelEntry(
+    val level: String,
+    val title: String,
+    val tint: Color
+)
 
 @Composable
 private fun OnboardingScreen(
@@ -1585,7 +1595,7 @@ private fun SectionEyebrow(text: String) {
 }
 
 @Composable
-private fun HeroSheetCard(title: String, body: String) {
+private fun HeroSheetCard(title: String, body: String? = null) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1603,7 +1613,9 @@ private fun HeroSheetCard(title: String, body: String) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleLarge, color = ColorWhite)
-            Text(body, style = MaterialTheme.typography.bodyMedium, color = ColorWhite.copy(alpha = 0.9f))
+            if (!body.isNullOrBlank()) {
+                Text(body, style = MaterialTheme.typography.bodyMedium, color = ColorWhite.copy(alpha = 0.9f))
+            }
         }
     }
 }

@@ -1,5 +1,5 @@
 package org.entner.HitzeV.config
 
 object AppFeatureFlags {
-    const val enableCustomGeoSphereUrlSetting = true
+    const val enableCustomGeoSphereUrlSetting = false
 }

@@ -105,47 +105,14 @@ class Copybook(private val language: ResolvedLanguage) {
     val onboardingAllowButton: String = t("Erlauben & Loslegen", "Allow & Start")
     val onboardingSkipButton: String = t("Später / Überspringen", "Later / Skip")
     val infoScreenHeatMeasuresTitle: String = t("Hitze-Schutzmaßnahmen", "Heat Protection Measures")
-    val infoScreenHeatMeasuresSubtitle: String = t("Erklärung der Werte für die Stufen 2 bis 4", "Explanation of values for levels 2 to 4")
     val infoScreenUvMeasuresTitle: String = t("UV-Schutzmaßnahmen", "UV Protection Measures")
-    val infoScreenUvMeasuresSubtitle: String = t(
-        "Der höchste UV-Index des Tages bestimmt die Belastung durch UV-Strahlung. In Österreich ist von April bis September zwischen 11:00 und 15:00 Uhr meist mit einem UV-Index >= 5 zu rechnen.",
-        "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00."
-    )
     val infoScreenUvLevel35Title: String = t("UV-Index 3-5", "UV Index 3-5")
-    val infoScreenUvLevel35Body: String = t(
-        "Pflicht: T-Shirt bis mindestens Mitte Oberarm, Hose bis mindestens zum Knie. Empfohlen: Kopfbedeckung, Sonnenbrille, Sonnencreme. Keine Arbeitseinschränkungen.",
-        "Mandatory: T-shirt to at least mid upper arm, trousers to at least the knee. Recommended: head covering, sunglasses, sunscreen. No work restrictions."
-    )
     val infoScreenUvLevel67Title: String = t("UV-Index 6-7", "UV Index 6-7")
-    val infoScreenUvLevel67Body: String = t(
-        "Pflicht: Kleidung wie oben plus Kopfbedeckung (idealerweise mit Nackenschutz), Sonnenbrille und Sonnencreme. Arbeit in direkter Sonne zwischen 11:00 und 15:00 Uhr maximal 2 Stunden, sonst Schatten oder Indoor.",
-        "Mandatory: clothing as above plus head covering (ideally with neck protection), sunglasses, and sunscreen. Direct sun exposure between 11:00 and 15:00 limited to a maximum of 2 hours, otherwise shade or indoors."
-    )
     val infoScreenUvLevel810Title: String = t("UV-Index 8-10", "UV Index 8-10")
-    val infoScreenUvLevel810Body: String = t(
-        "Gleiche Schutzmaßnahmen wie bei UV-Index 6-7. Arbeit in direkter Sonne zwischen 11:00 und 15:00 Uhr maximal 1 Stunde, sonst Schatten oder Indoor.",
-        "Same protective measures as UV index 6-7. Direct sun exposure between 11:00 and 15:00 limited to a maximum of 1 hour, otherwise shade or indoors."
-    )
     val infoScreenUvLevel11Title: String = t("UV-Index >= 11", "UV Index >= 11")
-    val infoScreenUvLevel11Body: String = t(
-        "Wurde im österreichischen Flachland bisher nicht gemessen.",
-        "Has not been measured in Austrian lowland regions so far."
-    )
     val infoScreenLevel2Title: String = t("2 (gefühlte Temperatur ≥ 30 °C)", "2 (apparent temperature ≥ 30 °C)")
-    val infoScreenLevel2Body: String = t(
-        "Bei dieser Belastung sollte die Arbeit so organisiert werden, dass zwischen 11:00 und 15:00 Uhr keine mittelschweren Tätigkeiten im Freien durchgeführt werden. Nutzen Sie kühlere Tageszeiten, häufige Trinkpausen und schattige Bereiche, um die körperliche Belastung wirksam zu reduzieren.",
-        "At this level, work should be organized so that no medium-heavy outdoor tasks are carried out between 11:00 and 15:00. Use cooler times of day, frequent hydration breaks, and shaded areas to effectively reduce physical strain."
-    )
     val infoScreenLevel3Title: String = t("3 (gefühlte Temperatur ≥ 35 °C)", "3 (apparent temperature ≥ 35 °C)")
-    val infoScreenLevel3Body: String = t(
-        "Ab dieser Stufe sind Schutzmaßnahmen konsequent umzusetzen: Zwischen 11:00 und 15:00 Uhr maximal 2 Stunden direkte Sonneneinstrahlung, danach nur im Schatten oder in Innenbereichen arbeiten. Planen Sie zusätzliche Erholungspausen ein, rotieren Sie Teams und beobachten Sie Anzeichen von Hitzestress besonders aufmerksam.",
-        "From this level onward, protective measures must be applied consistently: between 11:00 and 15:00, a maximum of 2 hours in direct sunlight, then continue work only in shade or indoors. Schedule extra recovery breaks, rotate teams, and closely monitor for signs of heat stress."
-    )
     val infoScreenLevel4Title: String = t("4 (gefühlte Temperatur ≥ 40 °C)", "4 (apparent temperature ≥ 40 °C)")
-    val infoScreenLevel4Body: String = t(
-        "Diese Stufe bedeutet eine kritische Hitzebelastung. Tätigkeiten im Freien sollen nur dann stattfinden, wenn sie unbedingt notwendig und organisatorisch nicht verschiebbar sind. Priorisieren Sie sofortige Schutzmaßnahmen, verlagern Sie Arbeiten nach innen und stellen Sie eine engmaschige Betreuung der Beschäftigten sicher.",
-        "This level indicates critical heat stress. Outdoor activities should only take place if they are absolutely necessary and cannot be postponed organizationally. Prioritize immediate protective actions, move tasks indoors whenever possible, and ensure close supervision of workers."
-    )
     val enterAddressMessage: String = t("Bitte eine Adresse eingeben.", "Please enter an address.")
     val noAddressFoundMessage: String = t("Keine passende Adresse gefunden.", "No matching address found.")
     val addressSearchFailedMessage: String = t("Adresssuche fehlgeschlagen.", "Address search failed.")
@@ -453,117 +420,94 @@ class Copybook(private val language: ResolvedLanguage) {
             ResolvedLanguage.BG to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Помагаме ви да спазвате законовите изисквания за рисковете от жега и естествено UV лъчение при работа на открито. Следете постоянно температурите и UV индекса.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "За да ви предупреждаваме навреме за опасни нива на жега на работните ви места, ни е нужно разрешение за push известия. Моля, разрешете ги в следващата стъпка.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Най-високият UV индекс за деня определя UV натоварването. В Австрия от април до септември между 11:00 и 15:00 обикновено се очаква UV индекс >= 5."
             ),
             ResolvedLanguage.DA to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Vi hjælper dig med at overholde lovkrav om farer fra varme og naturlig UV-stråling ved udendørs arbejde. Hold altid øje med temperaturer og UV-indeks.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "For at vi kan advare dig i tide om farlige varmeniveauer på dine arbejdspladser, har vi brug for din tilladelse til push-notifikationer. Tillad dem i næste trin.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Dagens højeste UV-indeks bestemmer UV-belastningen. I Østrig forventes der fra april til september normalt et UV-indeks >= 5 mellem kl. 11:00 og 15:00."
             ),
             ResolvedLanguage.ET to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Aitame sul täita õigusnõudeid, mis puudutavad kuumuse ja loodusliku UV-kiirguse ohte välitöödel. Hoia temperatuuridel ja UV-indeksil alati silm peal.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Et saaksime sind töökohtade ohtlikest kuumatasemetest õigel ajal hoiatada, vajame push-teavituste luba. Luba need järgmises sammus.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Päeva kõrgeim UV-indeks määrab UV-koormuse. Austrias on aprillist septembrini ajavahemikus 11:00–15:00 tavaliselt oodata UV-indeksit >= 5."
             ),
             ResolvedLanguage.FI to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Autamme sinua noudattamaan lakisääteisiä vaatimuksia, jotka koskevat kuumuuden ja luonnollisen UV-säteilyn riskejä ulkotyössä. Seuraa lämpötiloja ja UV-indeksiä jatkuvasti.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Jotta voimme varoittaa sinua ajoissa vaarallisista kuumuustasoista työpaikoillasi, tarvitsemme luvan push-ilmoituksiin. Salli ne seuraavassa vaiheessa.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Päivän korkein UV-indeksi määrittää UV-altistuksen. Itävallassa huhti-syyskuussa UV-indeksi >= 5 on yleensä odotettavissa klo 11:00–15:00."
             ),
             ResolvedLanguage.FR to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Nous vous aidons à respecter les exigences légales liées aux risques de chaleur et de rayonnement UV naturel lors du travail en extérieur. Gardez toujours un œil sur les températures et l'indice UV.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Afin de vous avertir à temps des niveaux de chaleur dangereux sur vos lieux de travail, nous avons besoin de votre autorisation pour les notifications push. Veuillez les autoriser à l'étape suivante.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "L'indice UV maximal de la journée détermine l'exposition aux UV. En Autriche, d'avril à septembre, un indice UV >= 5 est généralement attendu entre 11h00 et 15h00."
             ),
             ResolvedLanguage.EL to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Σας βοηθάμε να συμμορφώνεστε με τις νομικές απαιτήσεις σχετικά με τους κινδύνους από τη ζέστη και τη φυσική υπεριώδη ακτινοβολία στην υπαίθρια εργασία. Παρακολουθείτε πάντα τη θερμοκρασία και τον δείκτη UV.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Για να σας προειδοποιούμε έγκαιρα για επικίνδυνα επίπεδα ζέστης στους χώρους εργασίας σας, χρειαζόμαστε την άδειά σας για push ειδοποιήσεις. Επιτρέψτε τις στο επόμενο βήμα.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Ο υψηλότερος δείκτης UV της ημέρας καθορίζει την έκθεση στην υπεριώδη ακτινοβολία. Στην Αυστρία, από Απρίλιο έως Σεπτέμβριο, αναμένεται συνήθως δείκτης UV >= 5 μεταξύ 11:00 και 15:00."
             ),
             ResolvedLanguage.GA to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Cabhraímid leat riachtanais dhlíthiúla maidir le rioscaí ó theas agus radaíocht UV nádúrtha in obair lasmuigh a chomhlíonadh. Coinnigh súil ar theocht agus ar an innéacs UV i gcónaí.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Chun rabhadh tráthúil a thabhairt duit faoi leibhéil dainséaracha teasa ag d'ionaid oibre, teastaíonn cead uainn le haghaidh fógraí brú. Ceadaigh iad sa chéad chéim eile.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Cinneann an t-innéacs UV is airde den lá an nochtadh UV. San Ostair, ó Aibreán go Meán Fómhair, bíonn innéacs UV >= 5 le súil de ghnáth idir 11:00 agus 15:00."
             ),
             ResolvedLanguage.IT to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Ti aiutiamo a rispettare i requisiti legali relativi ai rischi da calore e radiazione UV naturale per il lavoro all'aperto. Tieni sempre sotto controllo temperature e indice UV.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Per avvisarti in tempo sui livelli di calore pericolosi nei tuoi luoghi di lavoro, abbiamo bisogno della tua autorizzazione per le notifiche push. Consentile nel passaggio successivo.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "L'indice UV massimo della giornata determina l'esposizione ai raggi UV. In Austria, da aprile a settembre, tra le 11:00 e le 15:00 è generalmente previsto un indice UV >= 5."
             ),
             ResolvedLanguage.HR to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Pomažemo vam uskladiti se sa zakonskim zahtjevima vezanim uz opasnosti od vrućine i prirodnog UV zračenja pri radu na otvorenom. Uvijek pratite temperaturu i UV indeks.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Kako bismo vas na vrijeme upozorili na opasne razine vrućine na vašim radnim mjestima, trebamo vaše dopuštenje za push obavijesti. Molimo omogućite ih u sljedećem koraku.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Najviši dnevni UV indeks određuje izloženost UV zračenju. U Austriji se od travnja do rujna između 11:00 i 15:00 obično očekuje UV indeks >= 5."
             ),
             ResolvedLanguage.LV to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Mēs palīdzam ievērot juridiskās prasības attiecībā uz karstuma un dabiskā UV starojuma riskiem āra darbā. Vienmēr sekojiet temperatūrai un UV indeksam.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Lai mēs varētu savlaicīgi brīdināt par bīstamu karstuma līmeni jūsu darba vietās, mums nepieciešama atļauja push paziņojumiem. Lūdzu, atļaujiet tos nākamajā solī.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Dienas augstākais UV indekss nosaka UV slodzi. Austrijā no aprīļa līdz septembrim laikā no 11:00 līdz 15:00 parasti gaidāms UV indekss >= 5."
             ),
             ResolvedLanguage.LT to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Padedame laikytis teisinių reikalavimų dėl karščio ir natūralios UV spinduliuotės pavojų dirbant lauke. Visada stebėkite temperatūrą ir UV indeksą.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Kad galėtume laiku įspėti apie pavojingą karščio lygį jūsų darbo vietose, mums reikia leidimo siųsti push pranešimus. Prašome juos leisti kitame žingsnyje.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Didžiausias dienos UV indeksas lemia UV poveikį. Austrijoje nuo balandžio iki rugsėjo tarp 11:00 ir 15:00 paprastai tikimasi UV indekso >= 5."
             ),
             ResolvedLanguage.MT to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Ngħinuk tikkonforma mar-rekwiżiti legali dwar ir-riskji mis-sħana u r-radjazzjoni UV naturali fix-xogħol barra. Żomm għajnejk fuq it-temperaturi u l-indiċi UV il-ħin kollu.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Biex inwissuk fil-ħin dwar livelli perikolużi ta' sħana fil-postijiet tax-xogħol tiegħek, għandna bżonn il-permess tiegħek għan-notifiki push. Jekk jogħġbok ippermettilhom fil-pass li jmiss.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "L-ogħla indiċi UV tal-jum jiddetermina l-espożizzjoni UV. Fl-Awstrija, minn April sa Settembru, normalment ikun mistenni indiċi UV >= 5 bejn 11:00 u 15:00."
             ),
             ResolvedLanguage.NL to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "We helpen je te voldoen aan wettelijke eisen rond risico's door hitte en natuurlijke UV-straling bij buitenwerk. Houd temperaturen en UV-index altijd in de gaten.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Om je op tijd te waarschuwen voor gevaarlijke hitteniveaus op je werkplekken, hebben we toestemming nodig voor pushmeldingen. Sta die toe in de volgende stap.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "De hoogste UV-index van de dag bepaalt de UV-belasting. In Oostenrijk wordt van april tot september tussen 11:00 en 15:00 meestal een UV-index >= 5 verwacht."
             ),
             ResolvedLanguage.PL to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Pomagamy spełniać wymogi prawne dotyczące zagrożeń związanych z upałem i naturalnym promieniowaniem UV przy pracy na zewnątrz. Zawsze monitoruj temperaturę i indeks UV.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Abyśmy mogli na czas ostrzegać o niebezpiecznych poziomach upału w Twoich miejscach pracy, potrzebujemy zgody na powiadomienia push. Włącz je w następnym kroku.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Najwyższy dzienny indeks UV określa ekspozycję na UV. W Austrii od kwietnia do września między 11:00 a 15:00 zwykle oczekuje się indeksu UV >= 5."
             ),
             ResolvedLanguage.PT to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Ajudamos a cumprir os requisitos legais relativos aos perigos do calor e da radiação UV natural no trabalho ao ar livre. Acompanhe sempre as temperaturas e o índice UV.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Para o avisarmos a tempo sobre níveis perigosos de calor nos seus locais de trabalho, precisamos da sua permissão para notificações push. Permita-as no próximo passo.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "O índice UV mais elevado do dia determina a exposição UV. Na Áustria, de abril a setembro, normalmente espera-se um índice UV >= 5 entre as 11:00 e as 15:00."
             ),
             ResolvedLanguage.RO to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Te ajutăm să respecți cerințele legale privind riscurile de căldură și radiație UV naturală la munca în aer liber. Urmărește permanent temperaturile și indicele UV.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Pentru a te avertiza la timp despre niveluri periculoase de căldură la locurile tale de muncă, avem nevoie de permisiunea pentru notificări push. Te rugăm să le permiți la pasul următor.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Cel mai mare indice UV al zilei determină expunerea la UV. În Austria, din aprilie până în septembrie, între 11:00 și 15:00 se așteaptă de obicei un indice UV >= 5."
             ),
             ResolvedLanguage.SV to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Vi hjälper dig att uppfylla lagkrav kring risker från värme och naturlig UV-strålning vid utomhusarbete. Håll alltid koll på temperaturer och UV-index.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "För att vi ska kunna varna dig i tid om farliga värmenivåer på dina arbetsplatser behöver vi ditt tillstånd för pushnotiser. Tillåt dem i nästa steg.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Dagens högsta UV-index bestämmer UV-belastningen. I Österrike förväntas från april till september vanligtvis ett UV-index >= 5 mellan 11:00 och 15:00."
             ),
             ResolvedLanguage.SK to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Pomáhame vám dodržiavať zákonné požiadavky týkajúce sa rizík z tepla a prirodzeného UV žiarenia pri práci vonku. Neustále sledujte teploty a UV index.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Aby sme vás mohli včas upozorniť na nebezpečné úrovne tepla na vašich pracoviskách, potrebujeme váš súhlas s push notifikáciami. Povoľte ich v ďalšom kroku.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Najvyšší UV index dňa určuje UV záťaž. V Rakúsku sa od apríla do septembra medzi 11:00 a 15:00 zvyčajne očakáva UV index >= 5."
             ),
             ResolvedLanguage.SL to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Pomagamo vam izpolnjevati zakonske zahteve glede nevarnosti vročine in naravnega UV sevanja pri delu na prostem. Vedno spremljajte temperature in UV indeks.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Da vas lahko pravočasno opozorimo na nevarne ravni vročine na vaših delovnih mestih, potrebujemo vaše dovoljenje za push obvestila. Omogočite jih v naslednjem koraku.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Najvišji dnevni UV indeks določa UV obremenitev. V Avstriji je od aprila do septembra med 11:00 in 15:00 običajno pričakovan UV indeks >= 5."
             ),
             ResolvedLanguage.ES to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Te ayudamos a cumplir los requisitos legales sobre riesgos por calor y radiación UV natural en trabajos al aire libre. Mantén siempre bajo control las temperaturas y el índice UV.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Para poder avisarte a tiempo sobre niveles peligrosos de calor en tus lugares de trabajo, necesitamos tu permiso para notificaciones push. Permítelas en el siguiente paso.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "El índice UV más alto del día determina la exposición a UV. En Austria, de abril a septiembre, normalmente se espera un índice UV >= 5 entre las 11:00 y las 15:00."
             ),
             ResolvedLanguage.CS to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Pomáháme vám dodržovat zákonné požadavky týkající se rizik z horka a přirozeného UV záření při práci venku. Neustále sledujte teploty a UV index.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Abychom vás mohli včas varovat před nebezpečnými úrovněmi horka na vašich pracovištích, potřebujeme vaše povolení k push oznámením. Povolte je v dalším kroku.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Nejvyšší denní UV index určuje UV zátěž. V Rakousku se od dubna do září mezi 11:00 a 15:00 obvykle očekává UV index >= 5."
             ),
             ResolvedLanguage.HU to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Segítünk megfelelni a szabadtéri munkát érintő hő- és természetes UV-sugárzási kockázatokra vonatkozó jogi követelményeknek. Mindig figyeld a hőmérsékletet és az UV-indexet.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Ahhoz, hogy időben figyelmeztethessünk a munkahelyeiden jelentkező veszélyes hőszintekre, engedélyre van szükségünk a push értesítésekhez. Kérjük, engedélyezd a következő lépésben.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "A napi legmagasabb UV-index határozza meg az UV-terhelést. Ausztriában áprilistól szeptemberig 11:00 és 15:00 között általában >= 5 UV-index várható."
             ),
             ResolvedLanguage.TR to mapOf(
                 "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Açık havada çalışma sırasında ısı ve doğal UV ışınımı risklerine ilişkin yasal gerekliliklere uymanıza yardımcı oluyoruz. Sıcaklıkları ve UV indeksini her zaman takip edin.",
                 "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Çalışma alanlarınızdaki tehlikeli sıcaklık seviyeleri hakkında sizi zamanında uyarabilmemiz için push bildirimlerine izin vermeniz gerekir. Lütfen bir sonraki adımda izin verin.",
-                "The highest UV index of the day determines UV exposure. In Austria, from April to September, a UV index >= 5 is usually expected between 11:00 and 15:00." to "Günün en yüksek UV indeksi UV maruziyetini belirler. Avusturya'da Nisan-Eylül arasında 11:00-15:00 saatleri arasında genellikle UV indeksi >= 5 beklenir."
             )
         )
     }
