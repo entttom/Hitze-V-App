@@ -15,9 +15,11 @@
 
 # Hitze-V
 
-Hitze-V ist eine liebevoll gestaltete App für alle, die Hitze an Arbeitsorten in Österreich rechtzeitig im Blick behalten möchten. Sie hilft dabei, wichtige Wetter- und Warninformationen übersichtlich an einem Ort zu sehen, damit gute Entscheidungen im Alltag einfacher werden.
+Hitze-V ist eine App für die Beobachtung von Hitzebelastung und natürlicher UV-Strahlung bei Arbeiten im Freien in Österreich. Sie greift zentrale Themen der Hitzeschutzverordnung auf und hilft dabei, aktuelle Hitzewarnungen, UV-Belastung und standortbezogene Entwicklungen übersichtlich im Blick zu behalten.
 
 ## Was die App macht
+
+Die Hitzeschutzverordnung stellt die Ermittlung und Beurteilung von Gefahren, den Zugang zu aktueller Hitzewarnung und UV-Index sowie die rechtzeitige Planung von Schutzmaßnahmen in den Mittelpunkt. Genau dabei unterstützt Hitze-V im Alltag.
 
 Mit Hitze-V kannst du Arbeitsorte speichern und für jeden Standort die aktuelle Hitzelage abrufen. Zusätzlich zeigt dir die App den UV-Index, die gefühlte Temperatur und eine praktische Vorschau für die nächsten vier Tage.
 
@@ -25,9 +27,13 @@ Wenn sich die Warnlage in einer betroffenen Gemeinde verändert, informiert dich
 
 ## Warum Hitze-V hilfreich ist
 
-Gerade bei Arbeiten im Freien kann Hitze schnell zur Belastung werden. Hitze-V unterstützt dich dabei, Entwicklungen früh zu erkennen, Risiken besser einzuschätzen und den Tag vorausschauender zu planen.
+Gerade bei Arbeiten im Freien können Hitze und natürliche UV-Strahlung zu einer ernsthaften Belastung werden. Die Arbeitsinspektion weist unter anderem auf Risiken wie Kreislaufprobleme, Kopfschmerzen, Erschöpfung, Sonnenbrand oder Augenschäden hin. Hitze-V unterstützt dabei, Entwicklungen früh zu erkennen, Risiken besser einzuschätzen und Schutzmaßnahmen vorausschauend einzuplanen.
 
 Die App macht wichtige Informationen leicht verständlich, klar sichtbar und unkompliziert zugänglich. Statt lange nach Daten zu suchen, bekommst du einen ruhigen, verlässlichen Überblick direkt auf dein Smartphone.
+
+Hitze-V orientiert sich am Thema Hitzeschutz bei Arbeiten im Freien. Mehr Informationen zur kommentierten Hitzeschutzverordnung findest du auf der Seite der Arbeitsinspektion: [Kommentierte Hitze-V](https://www.arbeitsinspektion.gv.at/Arbeitsstaetten-_Arbeitsplaetze/Arbeitsstaetten-_Arbeitsplaetze/kommentrierte-Hitze-V.html).
+
+Wichtig ist auch: Die Hitzeschutzverordnung betont die Gefahrenbeurteilung, passende Schutzmaßnahmen und gute Vorbereitung im Arbeitsalltag. Wenn GeoSphere Austria eine Hitzewarnung mindestens der Stufe 2, also gelb, ausweist, müssen Maßnahmen zum Hitze- und UV-Schutz umgesetzt werden. Hitze-V unterstützt bei diesem Überblick, ersetzt aber keine betriebliche Evaluierung oder verbindliche Schutzmaßnahmen vor Ort.
 
 ## Für wen die App gedacht ist
 
