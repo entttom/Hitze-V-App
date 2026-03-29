@@ -1,17 +1,5 @@
-<table align="center">
-  <tr>
-    <td align="center">
-      <a href="https://apps.apple.com/at/app/hitze-v/id6760189444">
-        <img src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83" alt="Download on the App Store" width="190" height="64">
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://play.google.com/store/apps/details?id=org.entner.HitzeV">
-        <img src="https://play.google.com/intl/en_us/badges/images/generic/en_badge_web_generic.png" alt="Get it on Google Play" width="190" height="64">
-      </a>
-    </td>
-  </tr>
-</table>
+| <a href="https://apps.apple.com/at/app/hitze-v/id6760189444"><img src="assets/store-badges/app-store.svg" alt="Laden im App Store" width="190" height="64"></a> | <a href="https://play.google.com/store/apps/details?id=org.entner.HitzeV"><img src="assets/store-badges/google-play.svg" alt="Jetzt bei Google Play" width="190" height="64"></a> |
+|:---:|:---:|
 
 # Hitze-V
 
