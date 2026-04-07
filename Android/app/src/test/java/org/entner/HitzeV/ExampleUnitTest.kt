@@ -28,14 +28,14 @@ class ExampleUnitTest {
             warnings = listOf(
                 DashboardDataService.GeoSphereWarning(
                     warningTypeId = 6,
-                    warningLevel = 3,
+                    warningLevel = 4,
                     warningTypeText = "Hitze",
                     start = "2026-07-10T08:00:00Z",
                     end = "2026-07-10T18:00:00Z"
                 ),
                 DashboardDataService.GeoSphereWarning(
                     warningTypeId = 6,
-                    warningLevel = 1,
+                    warningLevel = 2,
                     warningTypeText = "Hitze",
                     start = "2026-07-11T08:00:00Z",
                     end = "2026-07-11T18:00:00Z"
@@ -56,14 +56,14 @@ class ExampleUnitTest {
             warnings = listOf(
                 DashboardDataService.GeoSphereWarning(
                     warningTypeId = 6,
-                    warningLevel = 1,
+                    warningLevel = 2,
                     warningTypeText = "Hitze",
                     start = "2026-07-09T22:00:00Z",
                     end = "2026-07-10T08:00:00Z"
                 ),
                 DashboardDataService.GeoSphereWarning(
                     warningTypeId = 6,
-                    warningLevel = 2,
+                    warningLevel = 3,
                     warningTypeText = "Hitze",
                     start = "2026-07-10T07:30:00Z",
                     end = "2026-07-10T10:00:00Z"

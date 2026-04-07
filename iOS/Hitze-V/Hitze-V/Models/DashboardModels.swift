@@ -17,9 +17,9 @@ enum HazardSeverity: Int, Codable, Comparable {
     var level: Int {
         switch self {
         case .none: return 0
-        case .heatYellow, .coldYellow: return 1
-        case .heatOrange, .coldOrange: return 2
-        case .heatRed, .coldRed: return 3
+        case .heatYellow, .coldYellow: return 2
+        case .heatOrange, .coldOrange: return 3
+        case .heatRed, .coldRed: return 4
         }
     }
     
@@ -29,18 +29,18 @@ enum HazardSeverity: Int, Codable, Comparable {
 
     static func heat(from level: Int) -> HazardSeverity {
         switch level {
-        case 3...: return .heatRed
-        case 2: return .heatOrange
-        case 1: return .heatYellow
+        case 4...: return .heatRed
+        case 3: return .heatOrange
+        case 2: return .heatYellow
         default: return .none
         }
     }
     
     static func cold(from level: Int) -> HazardSeverity {
         switch level {
-        case 3...: return .coldRed
-        case 2: return .coldOrange
-        case 1: return .coldYellow
+        case 4...: return .coldRed
+        case 3: return .coldOrange
+        case 2: return .coldYellow
         default: return .none
         }
     }

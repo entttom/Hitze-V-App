@@ -7,25 +7,25 @@ import java.util.UUID
 
 enum class HazardSeverity(val rawValue: Int, val level: Int) {
     NONE(0, 0),
-    HEAT_YELLOW(11, 1),
-    HEAT_ORANGE(12, 2),
-    HEAT_RED(13, 3),
-    COLD_YELLOW(21, 1),
-    COLD_ORANGE(22, 2),
-    COLD_RED(23, 3);
+    HEAT_YELLOW(11, 2),
+    HEAT_ORANGE(12, 3),
+    HEAT_RED(13, 4),
+    COLD_YELLOW(21, 2),
+    COLD_ORANGE(22, 3),
+    COLD_RED(23, 4);
 
     companion object {
         fun heat(level: Int): HazardSeverity = when {
-            level >= 3 -> HEAT_RED
-            level == 2 -> HEAT_ORANGE
-            level == 1 -> HEAT_YELLOW
+            level >= 4 -> HEAT_RED
+            level == 3 -> HEAT_ORANGE
+            level == 2 -> HEAT_YELLOW
             else -> NONE
         }
 
         fun cold(level: Int): HazardSeverity = when {
-            level >= 3 -> COLD_RED
-            level == 2 -> COLD_ORANGE
-            level == 1 -> COLD_YELLOW
+            level >= 4 -> COLD_RED
+            level == 3 -> COLD_ORANGE
+            level == 2 -> COLD_YELLOW
             else -> NONE
         }
     }

@@ -66,7 +66,11 @@ struct ContentView: View {
                 AddWorkplaceView(viewModel: viewModel, copy: copy)
             }
             .sheet(isPresented: $isShowingSettings) {
-                SettingsView(copy: copy)
+                SettingsView(copy: copy) {
+                    Task {
+                        await viewModel.refreshAll()
+                    }
+                }
             }
             .sheet(isPresented: $isShowingInfo) {
                 InfoView(copy: copy)
@@ -1097,6 +1101,20 @@ struct Copybook {
         t(
             "Wenn gesetzt, wird diese URL statt des GeoSphere-Servers verwendet.",
             "If set, this URL is used instead of the GeoSphere server."
+        )
+    }
+    var mockModeActiveBadge: String { t("Mock aktiv", "Mock active") }
+    var mockModeSessionHint: String {
+        t(
+            "Mock-Modus ist bis zum nächsten App-Neustart aktiv.",
+            "Mock mode stays active until the app is restarted."
+        )
+    }
+    var mockModeActivatedTitle: String { t("Mock-Modus aktiviert", "Mock mode enabled") }
+    var mockModeActivatedMessage: String {
+        t(
+            "Für diese App-Sitzung werden zufällige Warnstufen für alle Arbeitsplätze angezeigt. Beim nächsten Neustart ist der Modus wieder aus.",
+            "This app session now shows random warning levels for all worksites. The mode turns off again on the next restart."
         )
     }
     var legalLinkURL: String { "https://www.arbeitsmediziner.wien" }

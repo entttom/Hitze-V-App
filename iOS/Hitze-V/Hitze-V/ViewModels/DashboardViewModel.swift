@@ -31,6 +31,7 @@ final class DashboardViewModel: ObservableObject {
     let subscriptionManager: SubscriptionManager
 
     private let dataService: DashboardDataService
+    private let mockModeController: MockModeController
     private let userDefaults: UserDefaults
     private let storageKey = "dashboard.worksites.v1"
     private var hasLoaded = false
@@ -39,10 +40,12 @@ final class DashboardViewModel: ObservableObject {
     init(
         subscriptionManager: SubscriptionManager? = nil,
         dataService: DashboardDataService? = nil,
+        mockModeController: MockModeController = .shared,
         userDefaults: UserDefaults = .standard
     ) {
         self.subscriptionManager = subscriptionManager ?? SubscriptionManager()
         self.dataService = dataService ?? DashboardDataService()
+        self.mockModeController = mockModeController
         self.userDefaults = userDefaults
 
         if let data = userDefaults.data(forKey: storageKey),
@@ -89,6 +92,21 @@ final class DashboardViewModel: ObservableObject {
 
         isRefreshing = true
         defer { isRefreshing = false }
+
+        if mockModeController.isEnabled {
+            snapshots = Dictionary(
+                uniqueKeysWithValues: worksites.map { worksite in
+                    (
+                        worksite.id,
+                        MockSnapshotFactory.makeSnapshot(
+                            for: worksite,
+                            sessionSeed: mockModeController.sessionSeed
+                        )
+                    )
+                }
+            )
+            return
+        }
 
         var nextSnapshots = snapshots
 
@@ -180,16 +198,18 @@ final class DashboardViewModel: ObservableObject {
     func addWorksite(fromAddressResult result: AddressSearchResult) async -> Bool {
         addressSearchMessage = nil
 
-        do {
-            _ = try await dataService.fetchSnapshot(for: result.coordinate)
-        } catch {
-            if isOutsideAustriaMunicipalityError(error) {
-                addressSearchMessage = "Dieses Gebiet liegt vermutlich außerhalb Österreichs oder wird von GeoSphere nicht erkannt. Ein Hinzufügen ist nicht möglich. / This area is likely outside Austria or not recognized by GeoSphere. Adding is not possible."
+        if !mockModeController.isEnabled {
+            do {
+                _ = try await dataService.fetchSnapshot(for: result.coordinate)
+            } catch {
+                if isOutsideAustriaMunicipalityError(error) {
+                    addressSearchMessage = "Dieses Gebiet liegt vermutlich außerhalb Österreichs oder wird von GeoSphere nicht erkannt. Ein Hinzufügen ist nicht möglich. / This area is likely outside Austria or not recognized by GeoSphere. Adding is not possible."
+                    return false
+                }
+
+                addressSearchMessage = error.localizedDescription
                 return false
             }
-
-            addressSearchMessage = error.localizedDescription
-            return false
         }
 
         let trimmedName = nameInput.trimmed
@@ -231,6 +251,10 @@ final class DashboardViewModel: ObservableObject {
 
         persistWorksites()
 
+        guard !mockModeController.isEnabled else {
+            return
+        }
+
         await subscriptionManager.syncTopics(
             for: worksites.map(\.coordinate),
             languageCode: currentPushLanguageCode()
@@ -246,6 +270,10 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func resyncSubscriptionsForCurrentLanguage() async {
+        guard !mockModeController.isEnabled else {
+            return
+        }
+
         await subscriptionManager.syncTopics(
             for: worksites.map(\.coordinate),
             languageCode: currentPushLanguageCode()

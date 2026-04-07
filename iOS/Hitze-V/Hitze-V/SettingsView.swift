@@ -19,10 +19,24 @@ enum AppTheme: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     let copy: Copybook
+    let onActivateMockMode: () -> Void
     
     @AppStorage("dashboard.language") private var languageRawValue = AppLanguage.system.rawValue
     @AppStorage("app.theme") private var themeRawValue = AppTheme.system.rawValue
     @AppStorage("network.customGeoSphereUrl") private var customGeoSphereURL = ""
+    @ObservedObject private var mockModeController: MockModeController
+    @State private var isPressingAboutCard = false
+    @State private var isShowingMockModeAlert = false
+
+    init(
+        copy: Copybook,
+        mockModeController: MockModeController = .shared,
+        onActivateMockMode: @escaping () -> Void = {}
+    ) {
+        self.copy = copy
+        self.onActivateMockMode = onActivateMockMode
+        _mockModeController = ObservedObject(wrappedValue: mockModeController)
+    }
     
     private var selectedLanguage: AppLanguage {
         AppLanguage(rawValue: languageRawValue) ?? .system
@@ -70,23 +84,7 @@ struct SettingsView: View {
                 }
                 
                 Section(header: Text(copy.aboutSection)) {
-                    VStack(alignment: .center, spacing: 10) {
-                        Text(copy.dataSourceLine)
-                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                            .multilineTextAlignment(.center)
-                        
-                        Text(copy.copyrightLine(year: currentYear))
-                            .font(.system(.footnote, design: .rounded).weight(.medium))
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                        
-                        if let legalURL = URL(string: copy.legalLinkURL) {
-                            Link(copy.legalLinkLabel, destination: legalURL)
-                                .font(.system(.footnote, design: .rounded).weight(.semibold))
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 4)
+                    aboutCard
                 }
             }
             .navigationTitle(copy.settingsTitle)
@@ -101,5 +99,72 @@ struct SettingsView: View {
             }
         }
         .preferredColorScheme(selectedTheme.colorScheme)
+        .alert(copy.mockModeActivatedTitle, isPresented: $isShowingMockModeAlert) {
+            Button(copy.settingsCloseButton, role: .cancel) {}
+        } message: {
+            Text(copy.mockModeActivatedMessage)
+        }
+    }
+
+    private var aboutCard: some View {
+        VStack(alignment: .center, spacing: 10) {
+            if mockModeController.isEnabled {
+                Text(copy.mockModeActiveBadge)
+                    .font(.system(.caption2, design: .rounded).weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color(red: 0.85, green: 0.24, blue: 0.20), in: Capsule())
+            }
+
+            Text(copy.dataSourceLine)
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .multilineTextAlignment(.center)
+            
+            Text(copy.copyrightLine(year: currentYear))
+                .font(.system(.footnote, design: .rounded).weight(.medium))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            
+            if let legalURL = URL(string: copy.legalLinkURL) {
+                Link(copy.legalLinkLabel, destination: legalURL)
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+            }
+
+            if mockModeController.isEnabled {
+                Text(copy.mockModeSessionHint)
+                    .font(.system(.caption2, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(
+                    isPressingAboutCard ? Color.red.opacity(0.65) : Color.black.opacity(0.06),
+                    lineWidth: isPressingAboutCard ? 2 : 1
+                )
+        )
+        .scaleEffect(isPressingAboutCard ? 0.985 : 1)
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .onLongPressGesture(minimumDuration: 10, maximumDistance: 36, pressing: { isPressing in
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isPressingAboutCard = isPressing
+            }
+        }) {
+            mockModeController.activate()
+            isShowingMockModeAlert = true
+            onActivateMockMode()
+        }
+        .animation(.easeInOut(duration: 0.2), value: isPressingAboutCard)
+        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+        .listRowBackground(Color.clear)
     }
 }
