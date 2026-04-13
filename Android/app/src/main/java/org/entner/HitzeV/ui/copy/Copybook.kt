@@ -3,17 +3,49 @@ package org.entner.HitzeV.ui.copy
 import org.entner.HitzeV.model.AppLanguage
 import org.entner.HitzeV.model.HazardSeverity
 import org.entner.HitzeV.model.ResolvedLanguage
-import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.format.TextStyle
+import java.util.Locale
 
 class Copybook(private val language: ResolvedLanguage) {
+    data class InfoBullet(
+        val text: String,
+        val cta: InfoCta? = null
+    )
+
+    data class InfoGroup(
+        val title: String,
+        val bullets: List<InfoBullet>
+    )
+
+    data class InfoSection(
+        val title: String,
+        val groups: List<InfoGroup>
+    )
+
+    data class InfoCta(
+        val label: String,
+        val url: String
+    )
+
+    private val uiLocale: Locale = Locale.forLanguageTag(language.localeTag)
+
     fun t(german: String, english: String): String = when (language) {
         ResolvedLanguage.DE -> german
         ResolvedLanguage.EN -> english
-        else -> TRANSLATIONS[language]?.get(english)
-            ?: LONG_TEXT_TRANSLATIONS[language]?.get(english)
-            ?: english
+        else -> requireNotNull(
+            CopybookSupplementalTranslations.translation(language, english)
+                ?: CopybookTranslationCatalog.translation(language, english)
+        ) {
+            "Missing Copybook translation for ${language.code}: $english"
+        }
     }
+
+    private fun bulletLines(german: String, english: String): List<InfoBullet> = t(german, english)
+        .split('\n')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .map { InfoBullet(text = it) }
 
     val shortTitle: String = t("Hitze-V", "Heat-V")
     val dashboardTitle: String = t("Sicher durch die Hitze", "Heat Safety at a Glance")
@@ -25,7 +57,7 @@ class Copybook(private val language: ResolvedLanguage) {
     val glanceSubtitle: String = t("Maximalwerte aller Arbeitsplätze", "Maximum values across all workplaces")
     val currentRiskTitle: String = t("Aktuelles Risiko", "Current Risk")
     val uvPeakTitle: String = t("Höchster UV", "Peak UV")
-    val apparentTitle: String = t("Max. gefühlte Temp", "Max. Feels Like")
+    val apparentTitle: String = t("Gefühlte Temp.", "Feels Like")
     val workplaceLabel: String = t("Arbeitsplätze", "Workplaces")
     val warningsLabel: String = t("Warnungen", "Warnings")
     val addWorkplaceTitle: String = t("Neuen Arbeitsplatz anlegen", "Create New Workplace")
@@ -38,7 +70,7 @@ class Copybook(private val language: ResolvedLanguage) {
     val monitoredWorkplacesTitle: String = t("Überwachte Arbeitsplätze", "Monitored Workplaces")
     val noWorkplaces: String = t("Noch keine Arbeitsplätze vorhanden.", "No workplaces yet.")
     val loading: String = t("Lade Live-Daten", "Loading live data")
-    val refreshButton: String = t("Aktualisieren", "Refresh")
+    val refreshButton: String = t("Daten aktualisieren", "Refresh data")
     val deleteWorkplace: String = t("Arbeitsplatz löschen", "Delete workplace")
     val cancelButton: String = t("Abbrechen", "Cancel")
     val settingsCloseButton: String = t("Schließen", "Close")
@@ -48,34 +80,55 @@ class Copybook(private val language: ResolvedLanguage) {
     val notAvailableShort: String = t("n/v", "n/a")
     val warningAllDay: String = t("Ganztägig", "All day")
     val heatWarningLevelLabel: String = t("Hitzewarnstufe", "Heat warning level")
+    val addWorkplaceFailureTitle: String = t("Hinzufügen nicht möglich", "Unable to add")
     val addOutsideAustriaMessage: String = t(
         "Dieses Gebiet liegt vermutlich außerhalb Österreichs oder wird von GeoSphere nicht erkannt. Ein Hinzufügen ist nicht möglich.",
         "This area is likely outside Austria or not recognized by GeoSphere. Adding is not possible."
     )
-    val uvWarningBadge67: String = t("UV-Warnung 6-7", "UV Warning 6-7")
-    val uvWarningBadge810: String = t("UV-Warnung 8-10", "UV Warning 8-10")
-    val uvWarningBadge11Plus: String = t("UV-Warnung >= 11", "UV Warning >= 11")
-    val uvWarningDetail67: String = t(
-        "Direkte Sonne zwischen 11:00 und 15:00 Uhr auf max. 2 Stunden begrenzen, sonst Schatten oder Indoor.",
-        "Limit direct sun exposure between 11:00 and 15:00 to max. 2 hours, otherwise shade or indoors."
+    val addWorkplaceHeroBody: String = t(
+        "Lege einen Namen fest und suche danach nach einer Adresse in Österreich.",
+        "Set a label and then search for an address in Austria."
     )
-    val uvWarningDetail67OutsideWindow: String = t(
-        "Erhöhte UV-Belastung heute: Schutzkleidung, Kopfbedeckung, Sonnenbrille und Sonnencreme konsequent verwenden.",
-        "Increased UV exposure today: consistently use protective clothing, head covering, sunglasses, and sunscreen."
+    val optionalFieldPlaceholder: String = t("Optional", "Optional")
+    val settingsHeroBody: String = t(
+        "Passe Darstellung, Sprache und rechtliche Hinweise an.",
+        "Adjust appearance, language, and legal details."
     )
-    val uvWarningDetail810: String = t(
-        "Direkte Sonne zwischen 11:00 und 15:00 Uhr auf max. 1 Stunde begrenzen, sonst Schatten oder Indoor.",
-        "Limit direct sun exposure between 11:00 and 15:00 to max. 1 hour, otherwise shade or indoors."
+    val uvWarningBadge5Plus: String = t("UV >= 5", "UV >= 5")
+    val uvInfoDetail5Plus: String = t(
+        "Ab UV-Index 5 steigt die Belastung deutlich. Schutzkleidung, Kopfbedeckung, Sonnenbrille und Sonnencreme konsequent verwenden.",
+        "At UV index 5 and above, exposure increases significantly. Consistently use protective clothing, head covering, sunglasses, and sunscreen."
     )
-    val uvWarningDetail810OutsideWindow: String = t(
-        "Hohe UV-Belastung heute: Schutzmaßnahmen konsequent umsetzen und Arbeiten bevorzugt in den Schatten verlagern.",
-        "High UV exposure today: apply protective measures consistently and prioritize work in shade."
-    )
-    val uvWarningDetail11Plus: String = t(
-        "UV-Index >= 11 wurde im österreichischen Flachland bisher nicht gemessen. Falls gemeldet: direkte Sonne vermeiden, nur mit maximalem Schutz arbeiten.",
-        "UV index >= 11 has not been measured in Austrian lowland regions so far. If reported: avoid direct sun and work only with maximum protection."
+    val uvInfoMeasures5Plus: String = t(
+        "Direkte Sonne und belastende Arbeiten möglichst in den Schatten verlagern und Aufenthalte in voller Sonne begrenzen.",
+        "Move direct sun exposure and strenuous work into shade whenever possible and limit time spent in full sun."
     )
     val appearanceSection: String = t("Erscheinungsbild", "Appearance")
+    val pushNotificationsSection: String = t("Push-Benachrichtigungen", "Push notifications")
+    val pushNotificationsDescription: String = t(
+        "Lege fest, ob Hitzewarnungen per Push gesendet werden und für welche Arbeitsplätze.",
+        "Choose whether heat alerts are sent as push notifications and for which worksites."
+    )
+    val pushNotificationsEnabledLabel: String = t(
+        "Push-Benachrichtigungen aktivieren",
+        "Enable push notifications"
+    )
+    val pushNotificationsEnabledDescription: String = t(
+        "Beim Ausschalten werden alle aktuellen Push-Abos sofort entfernt.",
+        "Turning this off immediately removes all current push subscriptions."
+    )
+    val pushWorksitesSectionTitle: String = t(
+        "Arbeitsplätze für Push",
+        "Worksites for push"
+    )
+    val pushNoWorksitesMessage: String = t(
+        "Lege zuerst einen Arbeitsplatz an, um Push-Benachrichtigungen gezielt zu steuern.",
+        "Add a worksite first to control push notifications individually."
+    )
+    val pushWorksiteFallbackSubtitle: String = t(
+        "Kein Adresstext vorhanden",
+        "No address available"
+    )
     val aboutSection: String = t("Info & Rechtliches", "Info & Legal")
     val dataSourceLine: String = t("Datenquelle: GeoSphere Austria", "Data source: GeoSphere Austria")
     val geocodingAttributionLine: String = "Geocoding data © OpenStreetMap contributors"
@@ -90,6 +143,33 @@ class Copybook(private val language: ResolvedLanguage) {
         "If set, this URL is used instead of the GeoSphere server."
     )
     val customGeoSphereUrlPlaceholder: String = "https://example.com/geosphere.json"
+    val machineTranslationDisclaimer: String = when (language) {
+        ResolvedLanguage.DE -> "Texte in anderen Sprachen werden maschinell aus dem Deutschen übersetzt. Für Vollständigkeit und Korrektheit dieser Übersetzungen kann keine Gewähr übernommen werden."
+        ResolvedLanguage.BG -> "Текстовете на други езици са машинно преведени от немски. Не се дава гаранция за пълнотата или точността на тези преводи."
+        ResolvedLanguage.DA -> "Tekster på andre sprog er maskinoversat fra tysk. Der gives ingen garanti for disse oversættelsers fuldstændighed eller korrekthed."
+        ResolvedLanguage.EN -> "Texts in other languages are machine-translated from German. No guarantee is given for the completeness or accuracy of these translations."
+        ResolvedLanguage.ET -> "Teistes keeltes olevad tekstid on saksa keelest masintõlgitud. Nende tõlgete täielikkuse ega õigsuse eest ei anta garantiid."
+        ResolvedLanguage.FI -> "Muiden kielten tekstit on konekäännetty saksasta. Näiden käännösten täydellisyydestä tai oikeellisuudesta ei anneta takuuta."
+        ResolvedLanguage.FR -> "Les textes dans les autres langues sont traduits automatiquement à partir de l’allemand. Aucune garantie n’est donnée quant à l’exhaustivité ou à l’exactitude de ces traductions."
+        ResolvedLanguage.EL -> "Τα κείμενα σε άλλες γλώσσες έχουν μεταφραστεί αυτόματα από τα γερμανικά. Δεν παρέχεται καμία εγγύηση για την πληρότητα ή την ακρίβεια αυτών των μεταφράσεων."
+        ResolvedLanguage.GA -> "Tá na téacsanna i dteangacha eile aistrithe go huathoibríoch ón nGearmáinis. Ní thugtar aon ráthaíocht maidir le hiomláine ná cruinneas na n-aistriúchán seo."
+        ResolvedLanguage.IT -> "I testi nelle altre lingue sono tradotti automaticamente dal tedesco. Non viene fornita alcuna garanzia circa la completezza o la correttezza di queste traduzioni."
+        ResolvedLanguage.HR -> "Tekstovi na drugim jezicima strojno su prevedeni s njemačkog. Ne daje se nikakvo jamstvo za potpunost ili točnost tih prijevoda."
+        ResolvedLanguage.LV -> "Teksti citās valodās ir mašīntulkoti no vācu valodas. Netiek sniegta nekāda garantija par šo tulkojumu pilnīgumu vai pareizību."
+        ResolvedLanguage.LT -> "Tekstai kitomis kalbomis yra automatiškai išversti iš vokiečių kalbos. Nėra teikiama jokia garantija dėl šių vertimų išsamumo ar tikslumo."
+        ResolvedLanguage.MT -> "It-testi b'lingwi oħra huma tradotti b'mod awtomatiku mill-Ġermaniż. Ma tingħata ebda garanzija dwar il-kompletezza jew il-korrettezza ta' dawn it-traduzzjonijiet."
+        ResolvedLanguage.NL -> "Teksten in andere talen zijn machinaal vertaald vanuit het Duits. Voor de volledigheid of juistheid van deze vertalingen wordt geen garantie gegeven."
+        ResolvedLanguage.PL -> "Teksty w innych językach są tłumaczone maszynowo z języka niemieckiego. Nie udziela się żadnej gwarancji co do kompletności ani poprawności tych tłumaczeń."
+        ResolvedLanguage.PT -> "Os textos noutros idiomas são traduzidos automaticamente do alemão. Não é dada qualquer garantia quanto à integralidade ou correção dessas traduções."
+        ResolvedLanguage.RO -> "Textele în alte limbi sunt traduse automat din germană. Nu se oferă nicio garanție privind caracterul complet sau corectitudinea acestor traduceri."
+        ResolvedLanguage.SV -> "Texter på andra språk är maskinöversatta från tyska. Ingen garanti lämnas för att dessa översättningar är fullständiga eller korrekta."
+        ResolvedLanguage.SK -> "Texty v iných jazykoch sú strojovo preložené z nemčiny. Za úplnosť ani správnosť týchto prekladov sa neposkytuje žiadna záruka."
+        ResolvedLanguage.SL -> "Besedila v drugih jezikih so strojno prevedena iz nemščine. Za popolnost ali pravilnost teh prevodov ni mogoče jamčiti."
+        ResolvedLanguage.ES -> "Los textos en otros idiomas están traducidos automáticamente del alemán. No se ofrece ninguna garantía sobre la integridad o la exactitud de estas traducciones."
+        ResolvedLanguage.CS -> "Texty v jiných jazycích jsou strojově přeloženy z němčiny. Za úplnost ani správnost těchto překladů se neposkytuje žádná záruka."
+        ResolvedLanguage.HU -> "A más nyelveken megjelenő szövegek németből gépi fordítással készültek. E fordítások teljességéért vagy helyességéért nem vállalunk garanciát."
+        ResolvedLanguage.TR -> "Diğer dillerdeki metinler Almancadan makine çevirisiyle çevrilmiştir. Bu çevirilerin eksiksizliği veya doğruluğu konusunda herhangi bir garanti verilmez."
+    }
     val legalLinkURL: String = "https://www.arbeitsmediziner.wien"
     val legalLinkLabel: String = "arbeitsmediziner.wien"
     val onboardingWelcomeTitle: String = t("Willkommen bei Hitze-V", "Welcome to Hitze-V")
@@ -105,65 +185,233 @@ class Copybook(private val language: ResolvedLanguage) {
     val onboardingAllowButton: String = t("Erlauben & Loslegen", "Allow & Start")
     val onboardingSkipButton: String = t("Später / Überspringen", "Later / Skip")
     val infoScreenHeatMeasuresTitle: String = t("Hitze-Schutzmaßnahmen", "Heat Protection Measures")
+    val infoScreenHeatScaleTitle: String = t("Skala der Hitzewarnstufen", "Heat warning scale")
     val infoScreenUvMeasuresTitle: String = t("UV-Schutzmaßnahmen", "UV Protection Measures")
-    val infoScreenUvLevel35Title: String = t("UV-Index 3-5", "UV Index 3-5")
-    val infoScreenUvLevel67Title: String = t("UV-Index 6-7", "UV Index 6-7")
-    val infoScreenUvLevel810Title: String = t("UV-Index 8-10", "UV Index 8-10")
-    val infoScreenUvLevel11Title: String = t("UV-Index >= 11", "UV Index >= 11")
+    val infoScreenUvLevel5Title: String = t("UV-Index >= 5", "UV Index >= 5")
     val infoScreenLevel2Title: String = t("2 (gefühlte Temperatur ≥ 30 °C)", "2 (apparent temperature ≥ 30 °C)")
     val infoScreenLevel3Title: String = t("3 (gefühlte Temperatur ≥ 35 °C)", "3 (apparent temperature ≥ 35 °C)")
     val infoScreenLevel4Title: String = t("4 (gefühlte Temperatur ≥ 40 °C)", "4 (apparent temperature ≥ 40 °C)")
+    val emergencyCallCta: InfoCta = InfoCta(
+        label = t("Jetzt 144 anrufen", "Call 144 now"),
+        url = "tel:144"
+    )
+    val infoIntro: String = t(
+        "Ab einer Hitzewarnung der Stufe 2 (ab 30 °C) müssen ein Maßnahmenprogramm und Notfallmaßnahmen umgesetzt werden. Mögliche Maßnahmen sind z.B.",
+        "Starting at heat warning level 2 (from 30 °C), a response plan and emergency measures must be implemented. Possible measures include:"
+    )
+    val heatProgramSection: InfoSection = InfoSection(
+        title = t("Maßnahmenprogramm (STOP-Prinzip)", "Response plan (STOP principle)"),
+        groups = listOf(
+            InfoGroup(
+                title = t("Technische Maßnahmen", "Technical measures"),
+                bullets = bulletLines(
+                    """
+                    Beschattung von Arbeits- und Pausenplätzen mit Sonnenschirmen, Pavillons etc.
+                    Technische Kühlmaßnahmen wie z.B. Ventilatoren
+                    Reduzierung körperlich anstrengender Arbeiten z. B. durch Hebehilfen
+                    """.trimIndent(),
+                    """
+                    Shade work and rest areas with parasols, pavilions, etc.
+                    Technical cooling measures such as fans
+                    Reduce physically strenuous work, e.g. by using lifting aids
+                    """.trimIndent()
+                )
+            ),
+            InfoGroup(
+                title = t("Organisatorische Maßnahmen", "Organizational measures"),
+                bullets = bulletLines(
+                    """
+                    Verlagerung von schweren Arbeiten in kühlere Tageszeiten
+                    Pausen zum Abkühlen
+                    Schwere Tätigkeiten im Schatten/Kühlen verrichten
+                    """.trimIndent(),
+                    """
+                    Shift heavy work to cooler times of day
+                    Take breaks to cool down
+                    Carry out heavy tasks in shade or cool areas
+                    """.trimIndent()
+                )
+            ),
+            InfoGroup(
+                title = t("Persönliche Schutzmaßnahmen", "Personal protective measures"),
+                bullets = bulletLines(
+                    """
+                    Ausreichend Trinkwasser bereitstellen
+                    Leichte Arbeitskleidung mit UV-Schutz und Sonnenschutzmittel (LSF von 50 empfohlen), UV-Schutzbrille, Kühltücher
+                    Je nach Einsatzgebiet: Schutzhelm mit Nackenschutz
+                    """.trimIndent(),
+                    """
+                    Provide sufficient drinking water
+                    Light work clothing with UV protection and sunscreen (SPF 50 recommended), UV-protective glasses, cooling towels
+                    Depending on the work area: safety helmet with neck protection
+                    """.trimIndent()
+                )
+            )
+        )
+    )
+    val heatEmergencySection: InfoSection = InfoSection(
+        title = t("Notfallmaßnahmen", "Emergency measures"),
+        groups = listOf(
+            InfoGroup(
+                title = t("Hitzebedingte Symptome können sein", "Heat-related symptoms can include"),
+                bullets = bulletLines(
+                    """
+                    Kopfschmerzen, Schwindel, Übelkeit
+                    Schwäche, Krämpfe, Verwirrtheit
+                    Heiße, trockene oder stark schwitzende Haut
+                    Bewusstseinsstörungen
+                    """.trimIndent(),
+                    """
+                    Headaches, dizziness, nausea
+                    Weakness, cramps, confusion
+                    Hot, dry skin or very sweaty skin
+                    Impaired consciousness
+                    """.trimIndent()
+                )
+            ),
+            InfoGroup(
+                title = t("Mögliche Notfallmaßnahmen", "Possible emergency measures"),
+                bullets = listOf(
+                    InfoBullet(
+                        text = t(
+                            "Arbeit unterbrechen und Betroffene in den Schatten/ins Kühle bringen",
+                            "Stop work and move the affected person to shade or a cool place"
+                        )
+                    ),
+                    InfoBullet(
+                        text = t(
+                            "Kühlung des Körpers z.B. durch feuchte Tücher oder Ventilation",
+                            "Cool the body, e.g. with damp cloths or ventilation"
+                        )
+                    ),
+                    InfoBullet(
+                        text = t("Kleidung lockern", "Loosen clothing")
+                    ),
+                    InfoBullet(
+                        text = t(
+                            "Langsam trinken lassen (Wasser, Tee, Elektrolytlösungen)",
+                            "Let the person drink slowly (water, tea, electrolyte solutions)"
+                        )
+                    ),
+                    InfoBullet(
+                        text = t(
+                            "Bei Bewusstlosigkeit in stabile Seitenlage bringen",
+                            "If unconscious, place the person in the recovery position"
+                        )
+                    ),
+                    InfoBullet(
+                        text = t(
+                            "Notruf (144) wählen, wenn Zustand nicht bald besser oder Anzeichen von Bewusstlosigkeit",
+                            "Call emergency services (144) if the condition does not improve soon or there are signs of loss of consciousness"
+                        )
+                    ),
+                    InfoBullet(
+                        text = t(
+                            "Bis zum Eintreffen der Rettung Bewusstsein und Atmung kontrollieren",
+                            "Monitor consciousness and breathing until emergency services arrive"
+                        )
+                    ),
+                    InfoBullet(
+                        text = t(
+                            "Ist keine normale Atmung vorhanden, sofort Wiederbelebungsmaßnahmen einleiten – Hilfe holen!",
+                            "If there is no normal breathing, start CPR immediately and get help"
+                        ),
+                        cta = emergencyCallCta
+                    )
+                )
+            )
+        )
+    )
+    val optionalChecklistCta: InfoCta? = INFO_CHECKLIST_URL?.let { url ->
+        InfoCta(
+            label = t(
+                "Hier geht’s zur Hitzeschutzcheckliste für Betriebe",
+                "Heat protection checklist for businesses"
+            ),
+            url = url
+        )
+    }
+    val uvSection: InfoSection = InfoSection(
+        title = infoScreenUvMeasuresTitle,
+        groups = listOf(
+            InfoGroup(
+                title = infoScreenUvLevel5Title,
+                bullets = listOf(
+                    InfoBullet(text = uvInfoDetail5Plus),
+                    InfoBullet(text = uvInfoMeasures5Plus)
+                )
+            )
+        )
+    )
     val enterAddressMessage: String = t("Bitte eine Adresse eingeben.", "Please enter an address.")
     val noAddressFoundMessage: String = t("Keine passende Adresse gefunden.", "No matching address found.")
-    val addressSearchFailedMessage: String = t("Adresssuche fehlgeschlagen.", "Address search failed.")
+    val addressSearchFailedMessage: String = t("Adresssuche fehlgeschlagen. Bitte erneut versuchen.", "Address search failed. Please try again.")
+    val liveDataUnavailableMessage: String = t(
+        "Live-Daten konnten derzeit nicht geladen werden. Bitte später erneut versuchen.",
+        "Live data could not be loaded right now. Please try again later."
+    )
+    val workplaceCouldNotBeAddedMessage: String = t(
+        "Der Arbeitsplatz konnte nicht hinzugefügt werden.",
+        "The workplace could not be added."
+    )
 
     fun copyrightLine(year: Int): String = "© $year SFK Robert Lembacher und Dr. Thomas Entner"
 
-    fun deleteWorkplaceMessage(name: String): String = t(
-        "Der Arbeitsplatz \"$name\" wird gelöscht.",
-        "The workplace \"$name\" will be deleted."
-    )
-
-    fun todayTitle(date: LocalDate): String = if (date == LocalDate.now()) t("Heute", "Today") else weekdayShort(date.dayOfWeek)
-
-    fun weekdayShort(dayOfWeek: DayOfWeek): String = when (dayOfWeek) {
-        DayOfWeek.MONDAY -> t("MO", "MON")
-        DayOfWeek.TUESDAY -> t("DI", "TUE")
-        DayOfWeek.WEDNESDAY -> t("MI", "WED")
-        DayOfWeek.THURSDAY -> t("DO", "THU")
-        DayOfWeek.FRIDAY -> t("FR", "FRI")
-        DayOfWeek.SATURDAY -> t("SA", "SAT")
-        DayOfWeek.SUNDAY -> t("SO", "SUN")
+    fun deleteWorkplaceMessage(name: String): String = when (language) {
+        ResolvedLanguage.DE -> "Der Arbeitsplatz \"$name\" wird gelöscht."
+        ResolvedLanguage.BG -> "Работното място „$name“ ще бъде изтрито."
+        ResolvedLanguage.DA -> "Arbejdspladsen \"$name\" bliver slettet."
+        ResolvedLanguage.EN -> "The workplace \"$name\" will be deleted."
+        ResolvedLanguage.ET -> "Töökoht „$name“ kustutatakse."
+        ResolvedLanguage.FI -> "Työpaikka \"$name\" poistetaan."
+        ResolvedLanguage.FR -> "Le lieu de travail « $name » sera supprimé."
+        ResolvedLanguage.EL -> "Ο χώρος εργασίας «$name» θα διαγραφεί."
+        ResolvedLanguage.GA -> "Scriosfar an láthair oibre \"$name\"."
+        ResolvedLanguage.IT -> "Il luogo di lavoro \"$name\" verrà eliminato."
+        ResolvedLanguage.HR -> "Radno mjesto „$name“ bit će izbrisano."
+        ResolvedLanguage.LV -> "Darba vieta “$name” tiks dzēsta."
+        ResolvedLanguage.LT -> "Darbo vieta „$name“ bus pašalinta."
+        ResolvedLanguage.MT -> "Il-post tax-xogħol \"$name\" se jitħassar."
+        ResolvedLanguage.NL -> "De werkplek \"$name\" wordt verwijderd."
+        ResolvedLanguage.PL -> "Miejsce pracy „$name” zostanie usunięte."
+        ResolvedLanguage.PT -> "O local de trabalho \"$name\" será removido."
+        ResolvedLanguage.RO -> "Locul de muncă „$name” va fi șters."
+        ResolvedLanguage.SV -> "Arbetsplatsen \"$name\" kommer att tas bort."
+        ResolvedLanguage.SK -> "Pracovisko „$name“ bude odstránené."
+        ResolvedLanguage.SL -> "Delovno mesto »$name« bo izbrisano."
+        ResolvedLanguage.ES -> "El lugar de trabajo \"$name\" se eliminará."
+        ResolvedLanguage.CS -> "Pracoviště „$name“ bude smazáno."
+        ResolvedLanguage.HU -> "A(z) „$name” munkahely törlésre kerül."
+        ResolvedLanguage.TR -> "\"$name\" iş yeri silinecek."
     }
 
-    fun languageOption(language: AppLanguage): String = when (language) {
-        AppLanguage.SYSTEM -> t("Systemsprache", "System language")
-        AppLanguage.BG -> t("Bulgarisch", "Bulgarian")
-        AppLanguage.DA -> t("Dänisch", "Danish")
-        AppLanguage.DE -> t("Deutsch", "German")
-        AppLanguage.EN -> t("Englisch", "English")
-        AppLanguage.ET -> t("Estnisch", "Estonian")
-        AppLanguage.FI -> t("Finnisch", "Finnish")
-        AppLanguage.FR -> t("Französisch", "French")
-        AppLanguage.EL -> t("Griechisch", "Greek")
-        AppLanguage.GA -> t("Irisch", "Irish")
-        AppLanguage.IT -> t("Italienisch", "Italian")
-        AppLanguage.HR -> t("Kroatisch", "Croatian")
-        AppLanguage.LV -> t("Lettisch", "Latvian")
-        AppLanguage.LT -> t("Litauisch", "Lithuanian")
-        AppLanguage.MT -> t("Maltesisch", "Maltese")
-        AppLanguage.NL -> t("Niederländisch", "Dutch")
-        AppLanguage.PL -> t("Polnisch", "Polish")
-        AppLanguage.PT -> t("Portugiesisch", "Portuguese")
-        AppLanguage.RO -> t("Rumänisch", "Romanian")
-        AppLanguage.SV -> t("Schwedisch", "Swedish")
-        AppLanguage.SK -> t("Slowakisch", "Slovak")
-        AppLanguage.SL -> t("Slowenisch", "Slovenian")
-        AppLanguage.ES -> t("Spanisch", "Spanish")
-        AppLanguage.CS -> t("Tschechisch", "Czech")
-        AppLanguage.HU -> t("Ungarisch", "Hungarian")
-        AppLanguage.TR -> t("Türkisch", "Turkish")
+    fun todayTitle(date: LocalDate): String = if (date == LocalDate.now()) t("Heute", "Today") else weekdayShort(date)
+
+    fun weekdayShort(date: LocalDate): String = date.dayOfWeek.getDisplayName(TextStyle.SHORT, uiLocale).uppercase(uiLocale)
+
+    fun languageOption(language: AppLanguage): String {
+        if (language == AppLanguage.SYSTEM) {
+            return t("Systemsprache", "System language")
+        }
+
+        val targetLocale = Locale.forLanguageTag(language.resolvedLanguage().localeTag)
+        val localized = targetLocale.getDisplayLanguage(uiLocale).ifBlank {
+            targetLocale.getDisplayLanguage(targetLocale)
+        }
+        return localized.replaceFirstChar { if (it.isLowerCase()) it.titlecase(uiLocale) else it.toString() }
     }
+
+    fun formatUv(value: Double?): String {
+        if (value == null) return notAvailableShort
+        return "UV ${String.format(uiLocale, "%.1f", value)}"
+    }
+
+    fun formatTemperature(value: Double?): String {
+        if (value == null) return notAvailableShort
+        return String.format(uiLocale, "%.1f C", value)
+    }
+
+    fun formatForecastTemperature(value: Double?): String = value?.let { String.format(uiLocale, "%.0f°", it) } ?: "-"
 
     fun severityHeadline(severity: HazardSeverity): String = when (severity) {
         HazardSeverity.NONE, HazardSeverity.COLD_YELLOW, HazardSeverity.COLD_ORANGE, HazardSeverity.COLD_RED -> t("Stabil", "Stable")
@@ -181,334 +429,35 @@ class Copybook(private val language: ResolvedLanguage) {
     }
 
     companion object {
-        private val TRANSLATIONS: Map<ResolvedLanguage, Map<String, String>> = mapOf(
-            ResolvedLanguage.BG to mapOf(
-                "Settings" to "Настройки",
-                "Language" to "Език",
-                "Appearance" to "Външен вид",
-                "Info & Legal" to "Информация и правна информация",
-                "Development" to "Разработка",
-                "System" to "Система",
-                "Light" to "Светъл",
-                "Dark" to "Тъмен",
-                "Close" to "Затвори",
-                "Cancel" to "Отказ",
-                "Refresh" to "Обновяване",
-                "Create New Workplace" to "Създаване на ново работно място",
-                "Delete workplace" to "Изтриване на работно място",
-                "Workplaces" to "Работни места",
-                "Warnings" to "Предупреждения",
-                "Current Risk" to "Текущ риск",
-                "Peak UV" to "Пик UV",
-                "Today" to "Днес"
-            ),
-            ResolvedLanguage.DA to mapOf(
-                "Settings" to "Indstillinger",
-                "Language" to "Sprog",
-                "Appearance" to "Udseende",
-                "Info & Legal" to "Info og jura",
-                "Development" to "Udvikling",
-                "System" to "System",
-                "Light" to "Lys",
-                "Dark" to "Mørk",
-                "Close" to "Luk",
-                "Cancel" to "Annuller",
-                "Refresh" to "Opdater",
-                "Create New Workplace" to "Opret ny arbejdsplads",
-                "Delete workplace" to "Slet arbejdsplads",
-                "Workplaces" to "Arbejdspladser",
-                "Warnings" to "Advarsler",
-                "Current Risk" to "Aktuel risiko",
-                "Peak UV" to "Højeste UV",
-                "Today" to "I dag"
-            ),
-            ResolvedLanguage.ET to mapOf(
-                "Settings" to "Seaded",
-                "Language" to "Keel",
-                "Appearance" to "Välimus",
-                "Info & Legal" to "Info ja õigus",
-                "Development" to "Arendus",
-                "System" to "Süsteem",
-                "Light" to "Hele",
-                "Dark" to "Tume",
-                "Close" to "Sulge",
-                "Cancel" to "Tühista",
-                "Refresh" to "Värskenda",
-                "Create New Workplace" to "Loo uus töökoht",
-                "Delete workplace" to "Kustuta töökoht",
-                "Workplaces" to "Töökohad",
-                "Warnings" to "Hoiatused",
-                "Current Risk" to "Praegune risk",
-                "Peak UV" to "Maksimaalne UV",
-                "Today" to "Täna"
-            ),
-            ResolvedLanguage.FI to mapOf(
-                "Settings" to "Asetukset",
-                "Language" to "Kieli",
-                "Appearance" to "Ulkoasu",
-                "Info & Legal" to "Tiedot ja oikeudellinen",
-                "Development" to "Kehitys",
-                "System" to "Järjestelmä",
-                "Light" to "Vaalea",
-                "Dark" to "Tumma",
-                "Close" to "Sulje",
-                "Cancel" to "Peruuta",
-                "Refresh" to "Päivitä",
-                "Create New Workplace" to "Luo uusi työpaikka",
-                "Delete workplace" to "Poista työpaikka",
-                "Workplaces" to "Työpaikat",
-                "Warnings" to "Varoitukset",
-                "Current Risk" to "Nykyinen riski",
-                "Peak UV" to "Korkein UV",
-                "Today" to "Tänään"
-            ),
-            ResolvedLanguage.FR to mapOf(
-                "Settings" to "Paramètres",
-                "Language" to "Langue",
-                "Appearance" to "Apparence",
-                "Info & Legal" to "Infos et mentions légales",
-                "Development" to "Développement",
-                "System" to "Système",
-                "Light" to "Clair",
-                "Dark" to "Sombre",
-                "Close" to "Fermer",
-                "Cancel" to "Annuler",
-                "Refresh" to "Actualiser",
-                "Create New Workplace" to "Créer un nouveau lieu de travail",
-                "Delete workplace" to "Supprimer le lieu de travail",
-                "Workplaces" to "Lieux de travail",
-                "Warnings" to "Avertissements",
-                "Current Risk" to "Risque actuel",
-                "Peak UV" to "Pic UV",
-                "Today" to "Aujourd'hui"
-            ),
-            ResolvedLanguage.EL to mapOf(
-                "Settings" to "Ρυθμίσεις",
-                "Language" to "Γλώσσα",
-                "Appearance" to "Εμφάνιση",
-                "Info & Legal" to "Πληροφορίες και νομικά",
-                "Development" to "Ανάπτυξη",
-                "System" to "Σύστημα",
-                "Light" to "Φωτεινό",
-                "Dark" to "Σκούρο",
-                "Close" to "Κλείσιμο",
-                "Cancel" to "Ακύρωση",
-                "Refresh" to "Ανανέωση",
-                "Create New Workplace" to "Δημιουργία νέου χώρου εργασίας",
-                "Delete workplace" to "Διαγραφή χώρου εργασίας",
-                "Workplaces" to "Χώροι εργασίας",
-                "Warnings" to "Προειδοποιήσεις",
-                "Current Risk" to "Τρέχων κίνδυνος",
-                "Peak UV" to "Μέγιστο UV",
-                "Today" to "Σήμερα"
-            ),
-            ResolvedLanguage.GA to mapOf("Language" to "Teanga", "Settings" to "Socruithe"),
-            ResolvedLanguage.IT to mapOf(
-                "Settings" to "Impostazioni",
-                "Language" to "Lingua",
-                "Appearance" to "Aspetto",
-                "Info & Legal" to "Info e note legali",
-                "Development" to "Sviluppo",
-                "System" to "Sistema",
-                "Light" to "Chiaro",
-                "Dark" to "Scuro",
-                "Close" to "Chiudi",
-                "Cancel" to "Annulla",
-                "Refresh" to "Aggiorna",
-                "Create New Workplace" to "Crea nuovo luogo di lavoro",
-                "Delete workplace" to "Elimina luogo di lavoro",
-                "Workplaces" to "Luoghi di lavoro",
-                "Warnings" to "Avvisi",
-                "Current Risk" to "Rischio attuale",
-                "Peak UV" to "Picco UV",
-                "Today" to "Oggi"
-            ),
-            ResolvedLanguage.HR to mapOf("Language" to "Jezik", "Settings" to "Postavke"),
-            ResolvedLanguage.LV to mapOf("Language" to "Valoda", "Settings" to "Iestatījumi"),
-            ResolvedLanguage.LT to mapOf("Language" to "Kalba", "Settings" to "Nustatymai"),
-            ResolvedLanguage.MT to mapOf("Language" to "Lingwa", "Settings" to "Settings"),
-            ResolvedLanguage.NL to mapOf(
-                "Settings" to "Instellingen",
-                "Language" to "Taal",
-                "Appearance" to "Weergave",
-                "Info & Legal" to "Info en juridisch",
-                "Development" to "Ontwikkeling",
-                "System" to "Systeem",
-                "Light" to "Licht",
-                "Dark" to "Donker",
-                "Close" to "Sluiten",
-                "Cancel" to "Annuleren",
-                "Refresh" to "Vernieuwen",
-                "Create New Workplace" to "Nieuwe werkplek aanmaken",
-                "Delete workplace" to "Werkplek verwijderen",
-                "Workplaces" to "Werkplekken",
-                "Warnings" to "Waarschuwingen",
-                "Current Risk" to "Huidig risico",
-                "Peak UV" to "Piek UV",
-                "Today" to "Vandaag"
-            ),
-            ResolvedLanguage.PL to mapOf("Language" to "Język", "Settings" to "Ustawienia"),
-            ResolvedLanguage.PT to mapOf("Language" to "Idioma", "Settings" to "Definições"),
-            ResolvedLanguage.RO to mapOf("Language" to "Limbă", "Settings" to "Setări"),
-            ResolvedLanguage.SV to mapOf(
-                "Settings" to "Inställningar",
-                "Language" to "Språk",
-                "Appearance" to "Utseende",
-                "Info & Legal" to "Info och juridik",
-                "Development" to "Utveckling",
-                "System" to "System",
-                "Light" to "Ljust",
-                "Dark" to "Mörkt",
-                "Close" to "Stäng",
-                "Cancel" to "Avbryt",
-                "Refresh" to "Uppdatera",
-                "Create New Workplace" to "Skapa ny arbetsplats",
-                "Delete workplace" to "Ta bort arbetsplats",
-                "Workplaces" to "Arbetsplatser",
-                "Warnings" to "Varningar",
-                "Current Risk" to "Aktuell risk",
-                "Peak UV" to "Högsta UV",
-                "Today" to "I dag"
-            ),
-            ResolvedLanguage.SK to mapOf("Language" to "Jazyk", "Settings" to "Nastavenia"),
-            ResolvedLanguage.SL to mapOf("Language" to "Jezik", "Settings" to "Nastavitve"),
-            ResolvedLanguage.ES to mapOf(
-                "Settings" to "Ajustes",
-                "Language" to "Idioma",
-                "Appearance" to "Apariencia",
-                "Info & Legal" to "Información y legal",
-                "Development" to "Desarrollo",
-                "System" to "Sistema",
-                "Light" to "Claro",
-                "Dark" to "Oscuro",
-                "Close" to "Cerrar",
-                "Cancel" to "Cancelar",
-                "Refresh" to "Actualizar",
-                "Create New Workplace" to "Crear nuevo lugar de trabajo",
-                "Delete workplace" to "Eliminar lugar de trabajo",
-                "Workplaces" to "Lugares de trabajo",
-                "Warnings" to "Advertencias",
-                "Current Risk" to "Riesgo actual",
-                "Peak UV" to "Pico UV",
-                "Today" to "Hoy"
-            ),
-            ResolvedLanguage.CS to mapOf("Language" to "Jazyk", "Settings" to "Nastavení"),
-            ResolvedLanguage.HU to mapOf("Language" to "Nyelv", "Settings" to "Beállítások"),
-            ResolvedLanguage.TR to mapOf(
-                "Settings" to "Ayarlar",
-                "Language" to "Dil",
-                "Appearance" to "Görünüm",
-                "Info & Legal" to "Bilgi ve yasal",
-                "Development" to "Geliştirme",
-                "System" to "Sistem",
-                "Light" to "Açık",
-                "Dark" to "Koyu",
-                "Close" to "Kapat",
-                "Cancel" to "İptal",
-                "Refresh" to "Yenile",
-                "Create New Workplace" to "Yeni iş yeri oluştur",
-                "Delete workplace" to "İş yerini sil",
-                "Workplaces" to "İş yerleri",
-                "Warnings" to "Uyarılar",
-                "Current Risk" to "Mevcut risk",
-                "Peak UV" to "En yüksek UV",
-                "Today" to "Bugün"
-            )
-        )
-
-        private val LONG_TEXT_TRANSLATIONS: Map<ResolvedLanguage, Map<String, String>> = mapOf(
-            ResolvedLanguage.BG to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Помагаме ви да спазвате законовите изисквания за рисковете от жега и естествено UV лъчение при работа на открито. Следете постоянно температурите и UV индекса.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "За да ви предупреждаваме навреме за опасни нива на жега на работните ви места, ни е нужно разрешение за push известия. Моля, разрешете ги в следващата стъпка.",
-            ),
-            ResolvedLanguage.DA to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Vi hjælper dig med at overholde lovkrav om farer fra varme og naturlig UV-stråling ved udendørs arbejde. Hold altid øje med temperaturer og UV-indeks.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "For at vi kan advare dig i tide om farlige varmeniveauer på dine arbejdspladser, har vi brug for din tilladelse til push-notifikationer. Tillad dem i næste trin.",
-            ),
-            ResolvedLanguage.ET to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Aitame sul täita õigusnõudeid, mis puudutavad kuumuse ja loodusliku UV-kiirguse ohte välitöödel. Hoia temperatuuridel ja UV-indeksil alati silm peal.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Et saaksime sind töökohtade ohtlikest kuumatasemetest õigel ajal hoiatada, vajame push-teavituste luba. Luba need järgmises sammus.",
-            ),
-            ResolvedLanguage.FI to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Autamme sinua noudattamaan lakisääteisiä vaatimuksia, jotka koskevat kuumuuden ja luonnollisen UV-säteilyn riskejä ulkotyössä. Seuraa lämpötiloja ja UV-indeksiä jatkuvasti.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Jotta voimme varoittaa sinua ajoissa vaarallisista kuumuustasoista työpaikoillasi, tarvitsemme luvan push-ilmoituksiin. Salli ne seuraavassa vaiheessa.",
-            ),
-            ResolvedLanguage.FR to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Nous vous aidons à respecter les exigences légales liées aux risques de chaleur et de rayonnement UV naturel lors du travail en extérieur. Gardez toujours un œil sur les températures et l'indice UV.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Afin de vous avertir à temps des niveaux de chaleur dangereux sur vos lieux de travail, nous avons besoin de votre autorisation pour les notifications push. Veuillez les autoriser à l'étape suivante.",
-            ),
-            ResolvedLanguage.EL to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Σας βοηθάμε να συμμορφώνεστε με τις νομικές απαιτήσεις σχετικά με τους κινδύνους από τη ζέστη και τη φυσική υπεριώδη ακτινοβολία στην υπαίθρια εργασία. Παρακολουθείτε πάντα τη θερμοκρασία και τον δείκτη UV.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Για να σας προειδοποιούμε έγκαιρα για επικίνδυνα επίπεδα ζέστης στους χώρους εργασίας σας, χρειαζόμαστε την άδειά σας για push ειδοποιήσεις. Επιτρέψτε τις στο επόμενο βήμα.",
-            ),
-            ResolvedLanguage.GA to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Cabhraímid leat riachtanais dhlíthiúla maidir le rioscaí ó theas agus radaíocht UV nádúrtha in obair lasmuigh a chomhlíonadh. Coinnigh súil ar theocht agus ar an innéacs UV i gcónaí.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Chun rabhadh tráthúil a thabhairt duit faoi leibhéil dainséaracha teasa ag d'ionaid oibre, teastaíonn cead uainn le haghaidh fógraí brú. Ceadaigh iad sa chéad chéim eile.",
-            ),
-            ResolvedLanguage.IT to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Ti aiutiamo a rispettare i requisiti legali relativi ai rischi da calore e radiazione UV naturale per il lavoro all'aperto. Tieni sempre sotto controllo temperature e indice UV.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Per avvisarti in tempo sui livelli di calore pericolosi nei tuoi luoghi di lavoro, abbiamo bisogno della tua autorizzazione per le notifiche push. Consentile nel passaggio successivo.",
-            ),
-            ResolvedLanguage.HR to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Pomažemo vam uskladiti se sa zakonskim zahtjevima vezanim uz opasnosti od vrućine i prirodnog UV zračenja pri radu na otvorenom. Uvijek pratite temperaturu i UV indeks.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Kako bismo vas na vrijeme upozorili na opasne razine vrućine na vašim radnim mjestima, trebamo vaše dopuštenje za push obavijesti. Molimo omogućite ih u sljedećem koraku.",
-            ),
-            ResolvedLanguage.LV to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Mēs palīdzam ievērot juridiskās prasības attiecībā uz karstuma un dabiskā UV starojuma riskiem āra darbā. Vienmēr sekojiet temperatūrai un UV indeksam.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Lai mēs varētu savlaicīgi brīdināt par bīstamu karstuma līmeni jūsu darba vietās, mums nepieciešama atļauja push paziņojumiem. Lūdzu, atļaujiet tos nākamajā solī.",
-            ),
-            ResolvedLanguage.LT to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Padedame laikytis teisinių reikalavimų dėl karščio ir natūralios UV spinduliuotės pavojų dirbant lauke. Visada stebėkite temperatūrą ir UV indeksą.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Kad galėtume laiku įspėti apie pavojingą karščio lygį jūsų darbo vietose, mums reikia leidimo siųsti push pranešimus. Prašome juos leisti kitame žingsnyje.",
-            ),
-            ResolvedLanguage.MT to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Ngħinuk tikkonforma mar-rekwiżiti legali dwar ir-riskji mis-sħana u r-radjazzjoni UV naturali fix-xogħol barra. Żomm għajnejk fuq it-temperaturi u l-indiċi UV il-ħin kollu.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Biex inwissuk fil-ħin dwar livelli perikolużi ta' sħana fil-postijiet tax-xogħol tiegħek, għandna bżonn il-permess tiegħek għan-notifiki push. Jekk jogħġbok ippermettilhom fil-pass li jmiss.",
-            ),
-            ResolvedLanguage.NL to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "We helpen je te voldoen aan wettelijke eisen rond risico's door hitte en natuurlijke UV-straling bij buitenwerk. Houd temperaturen en UV-index altijd in de gaten.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Om je op tijd te waarschuwen voor gevaarlijke hitteniveaus op je werkplekken, hebben we toestemming nodig voor pushmeldingen. Sta die toe in de volgende stap.",
-            ),
-            ResolvedLanguage.PL to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Pomagamy spełniać wymogi prawne dotyczące zagrożeń związanych z upałem i naturalnym promieniowaniem UV przy pracy na zewnątrz. Zawsze monitoruj temperaturę i indeks UV.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Abyśmy mogli na czas ostrzegać o niebezpiecznych poziomach upału w Twoich miejscach pracy, potrzebujemy zgody na powiadomienia push. Włącz je w następnym kroku.",
-            ),
-            ResolvedLanguage.PT to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Ajudamos a cumprir os requisitos legais relativos aos perigos do calor e da radiação UV natural no trabalho ao ar livre. Acompanhe sempre as temperaturas e o índice UV.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Para o avisarmos a tempo sobre níveis perigosos de calor nos seus locais de trabalho, precisamos da sua permissão para notificações push. Permita-as no próximo passo.",
-            ),
-            ResolvedLanguage.RO to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Te ajutăm să respecți cerințele legale privind riscurile de căldură și radiație UV naturală la munca în aer liber. Urmărește permanent temperaturile și indicele UV.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Pentru a te avertiza la timp despre niveluri periculoase de căldură la locurile tale de muncă, avem nevoie de permisiunea pentru notificări push. Te rugăm să le permiți la pasul următor.",
-            ),
-            ResolvedLanguage.SV to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Vi hjälper dig att uppfylla lagkrav kring risker från värme och naturlig UV-strålning vid utomhusarbete. Håll alltid koll på temperaturer och UV-index.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "För att vi ska kunna varna dig i tid om farliga värmenivåer på dina arbetsplatser behöver vi ditt tillstånd för pushnotiser. Tillåt dem i nästa steg.",
-            ),
-            ResolvedLanguage.SK to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Pomáhame vám dodržiavať zákonné požiadavky týkajúce sa rizík z tepla a prirodzeného UV žiarenia pri práci vonku. Neustále sledujte teploty a UV index.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Aby sme vás mohli včas upozorniť na nebezpečné úrovne tepla na vašich pracoviskách, potrebujeme váš súhlas s push notifikáciami. Povoľte ich v ďalšom kroku.",
-            ),
-            ResolvedLanguage.SL to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Pomagamo vam izpolnjevati zakonske zahteve glede nevarnosti vročine in naravnega UV sevanja pri delu na prostem. Vedno spremljajte temperature in UV indeks.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Da vas lahko pravočasno opozorimo na nevarne ravni vročine na vaših delovnih mestih, potrebujemo vaše dovoljenje za push obvestila. Omogočite jih v naslednjem koraku.",
-            ),
-            ResolvedLanguage.ES to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Te ayudamos a cumplir los requisitos legales sobre riesgos por calor y radiación UV natural en trabajos al aire libre. Mantén siempre bajo control las temperaturas y el índice UV.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Para poder avisarte a tiempo sobre niveles peligrosos de calor en tus lugares de trabajo, necesitamos tu permiso para notificaciones push. Permítelas en el siguiente paso.",
-            ),
-            ResolvedLanguage.CS to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Pomáháme vám dodržovat zákonné požadavky týkající se rizik z horka a přirozeného UV záření při práci venku. Neustále sledujte teploty a UV index.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Abychom vás mohli včas varovat před nebezpečnými úrovněmi horka na vašich pracovištích, potřebujeme vaše povolení k push oznámením. Povolte je v dalším kroku.",
-            ),
-            ResolvedLanguage.HU to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Segítünk megfelelni a szabadtéri munkát érintő hő- és természetes UV-sugárzási kockázatokra vonatkozó jogi követelményeknek. Mindig figyeld a hőmérsékletet és az UV-indexet.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Ahhoz, hogy időben figyelmeztethessünk a munkahelyeiden jelentkező veszélyes hőszintekre, engedélyre van szükségünk a push értesítésekhez. Kérjük, engedélyezd a következő lépésben.",
-            ),
-            ResolvedLanguage.TR to mapOf(
-                "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times." to "Açık havada çalışma sırasında ısı ve doğal UV ışınımı risklerine ilişkin yasal gerekliliklere uymanıza yardımcı oluyoruz. Sıcaklıkları ve UV indeksini her zaman takip edin.",
-                "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step." to "Çalışma alanlarınızdaki tehlikeli sıcaklık seviyeleri hakkında sizi zamanında uyarabilmemiz için push bildirimlerine izin vermeniz gerekir. Lütfen bir sonraki adımda izin verin.",
-            )
-        )
+        private val INFO_CHECKLIST_URL: String? = null
     }
 }
+
+private val ResolvedLanguage.localeTag: String
+    get() = when (this) {
+        ResolvedLanguage.DE -> "de-AT"
+        ResolvedLanguage.BG -> "bg-BG"
+        ResolvedLanguage.DA -> "da-DK"
+        ResolvedLanguage.EN -> "en-US"
+        ResolvedLanguage.ET -> "et-EE"
+        ResolvedLanguage.FI -> "fi-FI"
+        ResolvedLanguage.FR -> "fr-FR"
+        ResolvedLanguage.EL -> "el-GR"
+        ResolvedLanguage.GA -> "ga-IE"
+        ResolvedLanguage.IT -> "it-IT"
+        ResolvedLanguage.HR -> "hr-HR"
+        ResolvedLanguage.LV -> "lv-LV"
+        ResolvedLanguage.LT -> "lt-LT"
+        ResolvedLanguage.MT -> "mt-MT"
+        ResolvedLanguage.NL -> "nl-NL"
+        ResolvedLanguage.PL -> "pl-PL"
+        ResolvedLanguage.PT -> "pt-PT"
+        ResolvedLanguage.RO -> "ro-RO"
+        ResolvedLanguage.SV -> "sv-SE"
+        ResolvedLanguage.SK -> "sk-SK"
+        ResolvedLanguage.SL -> "sl-SI"
+        ResolvedLanguage.ES -> "es-ES"
+        ResolvedLanguage.CS -> "cs-CZ"
+        ResolvedLanguage.HU -> "hu-HU"
+        ResolvedLanguage.TR -> "tr-TR"
+    }

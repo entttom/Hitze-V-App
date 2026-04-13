@@ -109,13 +109,13 @@ enum MockSnapshotFactory {
     ) -> Double {
         switch severity {
         case .heatYellow:
-            return Double.random(in: 5.5 ... 7.4, using: &generator)
+            return Double.random(in: 5.0 ... 6.8, using: &generator)
         case .heatOrange:
-            return Double.random(in: 7.5 ... 9.9, using: &generator)
+            return Double.random(in: 5.6 ... 7.8, using: &generator)
         case .heatRed:
-            return Double.random(in: 10.0 ... 12.5, using: &generator)
+            return Double.random(in: 6.5 ... 9.5, using: &generator)
         case .none, .coldYellow, .coldOrange, .coldRed:
-            return Double.random(in: 2.5 ... 5.0, using: &generator)
+            return Double.random(in: 2.0 ... 4.9, using: &generator)
         }
     }
 

@@ -23,6 +23,43 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(keystorePropertiesFile.inputStream())
 }
 
+val androidCopybookCatalogDir = layout.buildDirectory.dir("generated/source/copybookCatalog/kotlin")
+val androidCopybookCatalogFile = androidCopybookCatalogDir.map {
+    it.file("org/entner/HitzeV/ui/copy/CopybookTranslationCatalog.kt")
+}
+
+val generateAndroidCopybookCatalog by tasks.registering(Exec::class) {
+    val script = rootProject.file("../scripts/generate_android_copybook_catalog.py")
+    val swiftCatalog = rootProject.file("../iOS/Hitze-V/Hitze-V/CopybookTranslationCatalog.swift")
+
+    inputs.file(script)
+    inputs.file(swiftCatalog)
+    outputs.file(androidCopybookCatalogFile)
+
+    doFirst {
+        androidCopybookCatalogFile.get().asFile.parentFile.mkdirs()
+    }
+
+    commandLine(
+        "python3",
+        script.absolutePath,
+        swiftCatalog.absolutePath,
+        androidCopybookCatalogFile.get().asFile.absolutePath
+    )
+}
+
+val validateAndroidCopybookLocalizations by tasks.registering(Exec::class) {
+    val script = rootProject.file("../scripts/check_android_copybook_localizations.py")
+    val androidCopybook = rootProject.file("app/src/main/java/org/entner/HitzeV/ui/copy/Copybook.kt")
+    val swiftCatalog = rootProject.file("../iOS/Hitze-V/Hitze-V/CopybookTranslationCatalog.swift")
+
+    inputs.file(script)
+    inputs.file(androidCopybook)
+    inputs.file(swiftCatalog)
+
+    commandLine("python3", script.absolutePath, "--strict")
+}
+
 android {
     namespace = "org.entner.HitzeV"
     compileSdk {
@@ -81,6 +118,14 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+    sourceSets {
+        getByName("main").java.srcDir(androidCopybookCatalogDir)
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(generateAndroidCopybookCatalog)
+    dependsOn(validateAndroidCopybookLocalizations)
 }
 
 play {

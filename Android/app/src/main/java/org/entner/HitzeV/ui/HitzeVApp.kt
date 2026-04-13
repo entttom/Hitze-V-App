@@ -23,6 +23,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -33,6 +34,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -48,8 +50,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.AddCircle
 import androidx.compose.material.icons.rounded.AccessTime
+import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Info
@@ -67,10 +71,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -85,6 +91,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
@@ -133,7 +140,6 @@ import org.entner.HitzeV.ui.theme.SkyBlue
 import org.entner.HitzeV.ui.theme.SurfaceDark
 import org.entner.HitzeV.ui.theme.SurfaceLight
 import java.time.LocalDate
-import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
@@ -148,37 +154,7 @@ private object Routes {
 private val warningTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 private val viennaZoneId: ZoneId = ZoneId.of("Europe/Vienna")
 
-private enum class UvExposureLevel {
-    NONE,
-    LEVEL_3_5,
-    LEVEL_6_7,
-    LEVEL_8_10,
-    LEVEL_11_PLUS
-}
-
-private fun uvExposureLevel(uvIndex: Double?): UvExposureLevel {
-    if (uvIndex == null) return UvExposureLevel.NONE
-    return when {
-        uvIndex < 3.0 -> UvExposureLevel.NONE
-        uvIndex < 6.0 -> UvExposureLevel.LEVEL_3_5
-        uvIndex < 8.0 -> UvExposureLevel.LEVEL_6_7
-        uvIndex < 11.0 -> UvExposureLevel.LEVEL_8_10
-        else -> UvExposureLevel.LEVEL_11_PLUS
-    }
-}
-
-private fun isUvRestrictionWindowNow(): Boolean {
-    val hour = LocalTime.now(viennaZoneId).hour
-    return hour in 11..14
-}
-
-private fun uvWarningTint(level: UvExposureLevel): Color = when (level) {
-    UvExposureLevel.LEVEL_6_7 -> AlertOrange
-    UvExposureLevel.LEVEL_8_10 -> AlertRed
-    UvExposureLevel.LEVEL_11_PLUS -> Color(0xFF6B7280)
-    UvExposureLevel.NONE,
-    UvExposureLevel.LEVEL_3_5 -> Color.Transparent
-}
+private fun showsUvWarningBadge(uvIndex: Double?): Boolean = uvIndex?.let { it >= 5.0 } == true
 
 @Composable
 fun HitzeVApp(viewModel: DashboardViewModel = viewModel()) {
@@ -283,7 +259,9 @@ private fun AppNavHost(
                 onClose = { navController.popBackStack() },
                 onThemeChanged = viewModel::setTheme,
                 onLanguageChanged = viewModel::setLanguage,
-                onCustomGeoSphereUrlChanged = viewModel::setCustomGeoSphereUrl
+                onCustomGeoSphereUrlChanged = viewModel::setCustomGeoSphereUrl,
+                onPushEnabledChanged = viewModel::setPushNotificationsEnabled,
+                onWorksitePushChanged = viewModel::setWorksitePushEnabled
             )
         }
         composable(Routes.Info) {
@@ -518,14 +496,14 @@ private fun GlanceCard(
                 GlanceTile(
                     modifier = Modifier.weight(1f),
                     title = copy.uvPeakTitle,
-                    value = highestUv?.let { "UV %.1f".format(it) } ?: copy.notAvailableShort,
+                    value = copy.formatUv(highestUv),
                     icon = Icons.Rounded.WarningAmber,
                     tint = GoldenSun
                 )
                 GlanceTile(
                     modifier = Modifier.weight(1f),
                     title = copy.apparentTitle,
-                    value = maxApparentTemperature?.let { "%.1f C".format(it) } ?: copy.notAvailableShort,
+                    value = copy.formatTemperature(maxApparentTemperature),
                     icon = Icons.Rounded.Thermostat,
                     tint = AlertRed
                 )
@@ -631,23 +609,8 @@ private fun WorksiteCard(
     var showDeleteConfirmation by remember { mutableStateOf(false) }
     var isPressed by remember { mutableStateOf(false) }
     val severity = snapshot?.severity ?: HazardSeverity.NONE
-    val uvLevel = uvExposureLevel(snapshot?.uvIndex)
-    val isUvRestrictionWindow = isUvRestrictionWindowNow()
-    val uvBadgeTitle = when (uvLevel) {
-        UvExposureLevel.LEVEL_6_7 -> copy.uvWarningBadge67
-        UvExposureLevel.LEVEL_8_10 -> copy.uvWarningBadge810
-        UvExposureLevel.LEVEL_11_PLUS -> copy.uvWarningBadge11Plus
-        UvExposureLevel.NONE,
-        UvExposureLevel.LEVEL_3_5 -> null
-    }
-    val uvDetailText = when (uvLevel) {
-        UvExposureLevel.LEVEL_6_7 -> if (isUvRestrictionWindow) copy.uvWarningDetail67 else copy.uvWarningDetail67OutsideWindow
-        UvExposureLevel.LEVEL_8_10 -> if (isUvRestrictionWindow) copy.uvWarningDetail810 else copy.uvWarningDetail810OutsideWindow
-        UvExposureLevel.LEVEL_11_PLUS -> copy.uvWarningDetail11Plus
-        UvExposureLevel.NONE,
-        UvExposureLevel.LEVEL_3_5 -> null
-    }
-    val uvWarningColor = uvWarningTint(uvLevel)
+    val uvBadgeTitle = if (showsUvWarningBadge(snapshot?.uvIndex)) copy.uvWarningBadge5Plus else null
+    val uvWarningColor = AlertOrange
     val isActive = showDeleteConfirmation || isPressed
     val scale by animateFloatAsState(if (isActive) 0.985f else 1f, label = "worksiteScale")
     val borderColor = if (isActive) AlertRed.copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.06f)
@@ -762,8 +725,8 @@ private fun WorksiteCard(
 
                             if (snapshot != null) {
                                 Column(horizontalAlignment = Alignment.End) {
-                                    MiniFact(Icons.Rounded.WarningAmber, snapshot.uvIndex?.let { "UV %.1f".format(it) } ?: "UV ${copy.notAvailableShort}", worksiteDetailColor(severity))
-                                    MiniFact(Icons.Rounded.Thermostat, snapshot.apparentTemperature?.let { "%.1f C".format(it) } ?: copy.notAvailableShort, worksiteDetailColor(severity))
+                                    MiniFact(Icons.Rounded.WarningAmber, copy.formatUv(snapshot.uvIndex), worksiteDetailColor(severity))
+                                    MiniFact(Icons.Rounded.Thermostat, copy.formatTemperature(snapshot.apparentTemperature), worksiteDetailColor(severity))
                                     if (!uvBadgeTitle.isNullOrBlank()) {
                                         Surface(
                                             modifier = Modifier.padding(top = 4.dp),
@@ -786,23 +749,6 @@ private fun WorksiteCard(
                             Text(copy.loading, style = MaterialTheme.typography.bodyMedium, color = secondaryContentColor())
                         } else {
                             Text(snapshot.municipalityName, style = MaterialTheme.typography.labelLarge, color = worksiteDetailColor(severity))
-                            if (!uvDetailText.isNullOrBlank()) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Top) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.ReportProblem,
-                                        contentDescription = null,
-                                        tint = uvWarningColor,
-                                        modifier = Modifier
-                                            .padding(top = 2.dp)
-                                            .size(14.dp)
-                                    )
-                                    Text(
-                                        text = uvDetailText,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = uvWarningColor
-                                    )
-                                }
-                            }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.Center
@@ -909,7 +855,7 @@ private fun DailyForecastChip(
                 Icon(severityIcon(severity), contentDescription = null, tint = foreground, modifier = Modifier.size(14.dp))
             }
             Text(
-                temperature?.let { "%.0f°".format(it) } ?: "-",
+                copy.formatForecastTemperature(temperature),
                 style = MaterialTheme.typography.labelLarge,
                 color = foreground
             )
@@ -968,7 +914,7 @@ private fun AddWorkplaceScreen(
     if (!addFailureMessage.isNullOrBlank()) {
         AlertDialog(
             onDismissRequest = { addFailureMessage = null },
-            title = { Text(copy.t("Hinzufügen nicht möglich", "Unable to add")) },
+            title = { Text(copy.addWorkplaceFailureTitle) },
             text = { Text(addFailureMessage.orEmpty()) },
             confirmButton = {
                 TextButton(onClick = { addFailureMessage = null }) {
@@ -1005,10 +951,7 @@ private fun AddWorkplaceScreen(
                 item {
                     HeroSheetCard(
                         title = copy.addWorkplaceTitle,
-                        body = copy.t(
-                            "Lege einen Namen fest und suche danach nach einer Adresse in Österreich.",
-                            "Set a label and then search for an address in Austria."
-                        )
+                        body = copy.addWorkplaceHeroBody
                     )
                 }
 
@@ -1018,7 +961,7 @@ private fun AddWorkplaceScreen(
                             InputSection(
                                 label = copy.namePlaceholder,
                                 value = uiState.nameInput,
-                                placeholder = copy.t("Optional", "Optional"),
+                                placeholder = copy.optionalFieldPlaceholder,
                                 onValueChange = onNameChanged
                             )
 
@@ -1181,9 +1124,36 @@ private fun SettingsScreen(
     onClose: () -> Unit,
     onThemeChanged: (AppTheme) -> Unit,
     onLanguageChanged: (AppLanguage) -> Unit,
-    onCustomGeoSphereUrlChanged: (String) -> Unit
+    onCustomGeoSphereUrlChanged: (String) -> Unit,
+    onPushEnabledChanged: (Boolean) -> Unit,
+    onWorksitePushChanged: (String, Boolean) -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
+    var isShowingLanguageSheet by rememberSaveable { mutableStateOf(false) }
+
+    if (isShowingLanguageSheet) {
+        ModalBottomSheet(onDismissRequest = { isShowingLanguageSheet = false }) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding(),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(AppLanguage.entries) { language ->
+                    ThemeOptionButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        selected = uiState.appLanguage == language,
+                        label = copy.languageOption(language),
+                        onClick = {
+                            onLanguageChanged(language)
+                            isShowingLanguageSheet = false
+                        }
+                    )
+                }
+            }
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -1212,10 +1182,7 @@ private fun SettingsScreen(
         ) {
             HeroSheetCard(
                 title = copy.settingsTitle,
-                body = copy.t(
-                    "Passe Darstellung, Sprache und rechtliche Hinweise an.",
-                    "Adjust appearance, language, and legal details."
-                )
+                body = copy.settingsHeroBody
             )
 
             SectionCard(title = copy.appearanceSection) {
@@ -1242,14 +1209,38 @@ private fun SettingsScreen(
             }
 
             SectionCard(title = copy.languageSection) {
-                AppLanguage.entries.forEach { language ->
-                    ThemeOptionButton(
-                        modifier = Modifier.fillMaxWidth(),
-                        selected = uiState.appLanguage == language,
-                        label = copy.languageOption(language),
-                        onClick = { onLanguageChanged(language) }
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+                SelectionRow(
+                    value = copy.languageOption(uiState.appLanguage),
+                    onClick = { isShowingLanguageSheet = true }
+                )
+            }
+
+            SectionCard(title = copy.pushNotificationsSection) {
+                Text(copy.pushNotificationsDescription, style = MaterialTheme.typography.bodyMedium)
+
+                SwitchRow(
+                    title = copy.pushNotificationsEnabledLabel,
+                    subtitle = copy.pushNotificationsEnabledDescription,
+                    checked = uiState.isPushEnabled,
+                    onCheckedChange = onPushEnabledChanged
+                )
+            }
+
+            SectionCard(title = copy.pushWorksitesSectionTitle) {
+                if (uiState.worksites.isEmpty()) {
+                    Text(copy.pushNoWorksitesMessage, style = MaterialTheme.typography.bodyMedium, color = secondaryContentColor())
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        uiState.worksites.forEach { worksite ->
+                            SwitchRow(
+                                title = worksite.name,
+                                subtitle = worksite.address?.takeIf { it.isNotBlank() } ?: copy.pushWorksiteFallbackSubtitle,
+                                checked = worksite.id !in uiState.disabledPushWorksiteIds,
+                                enabled = uiState.isPushEnabled,
+                                onCheckedChange = { enabled -> onWorksitePushChanged(worksite.id, enabled) }
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1279,8 +1270,89 @@ private fun SettingsScreen(
                     TextButton(onClick = { uriHandler.openUri(copy.legalLinkURL) }) {
                         Text(copy.legalLinkLabel)
                     }
+                    Text(
+                        text = copy.machineTranslationDisclaimer,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SwitchRow(
+    title: String,
+    subtitle: String? = null,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (enabled) 1f else 0.55f),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(text = title, style = MaterialTheme.typography.bodyLarge)
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = secondaryContentColor()
+                    )
+                }
+            }
+            Switch(
+                checked = checked,
+                enabled = enabled,
+                onCheckedChange = onCheckedChange
+            )
+        }
+    }
+}
+
+@Composable
+private fun SelectionRow(
+    value: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = value,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -1320,6 +1392,8 @@ private fun SectionCard(title: String, content: @Composable ColumnScope.() -> Un
 
 @Composable
 private fun InfoScreen(copy: Copybook, onClose: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -1341,24 +1415,54 @@ private fun InfoScreen(copy: Copybook, onClose: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                InfoGroupCard(
-                    title = copy.infoScreenHeatMeasuresTitle,
+                InfoSectionHeader(copy.infoScreenHeatMeasuresTitle)
+            }
+            item {
+                InfoScaleCard(
+                    title = copy.infoScreenHeatScaleTitle,
                     entries = listOf(
-                        InfoLevelEntry(level = "2", title = copy.infoScreenLevel2Title, tint = AlertYellow),
-                        InfoLevelEntry(level = "3", title = copy.infoScreenLevel3Title, tint = AlertOrange),
-                        InfoLevelEntry(level = "4", title = copy.infoScreenLevel4Title, tint = AlertRed)
+                        InfoScaleEntry(level = "2", title = copy.infoScreenLevel2Title, tint = AlertYellow),
+                        InfoScaleEntry(level = "3", title = copy.infoScreenLevel3Title, tint = AlertOrange),
+                        InfoScaleEntry(level = "4", title = copy.infoScreenLevel4Title, tint = AlertRed)
                     )
                 )
             }
             item {
-                InfoGroupCard(
-                    title = copy.infoScreenUvMeasuresTitle,
-                    entries = listOf(
-                        InfoLevelEntry(level = "3-5", title = copy.infoScreenUvLevel35Title, tint = AlertYellow),
-                        InfoLevelEntry(level = "6-7", title = copy.infoScreenUvLevel67Title, tint = AlertOrange),
-                        InfoLevelEntry(level = "8-10", title = copy.infoScreenUvLevel810Title, tint = AlertRed),
-                        InfoLevelEntry(level = ">=11", title = copy.infoScreenUvLevel11Title, tint = Color(0xFF6B7280))
+                InfoIntroCard(copy.infoIntro)
+            }
+            item {
+                StructuredInfoCard(
+                    section = copy.heatProgramSection,
+                    icon = Icons.Rounded.Thermostat,
+                    tint = AlertOrange,
+                    onOpenUrl = { uriHandler.openUri(it) }
+                )
+            }
+            item {
+                StructuredInfoCard(
+                    section = copy.heatEmergencySection,
+                    icon = Icons.Rounded.WarningAmber,
+                    tint = AlertRed,
+                    onOpenUrl = { uriHandler.openUri(it) }
+                )
+            }
+            copy.optionalChecklistCta?.let { cta ->
+                item {
+                    InfoChecklistCard(
+                        label = cta.label,
+                        onClick = { uriHandler.openUri(cta.url) }
                     )
+                }
+            }
+            item {
+                InfoSectionHeader(copy.infoScreenUvMeasuresTitle)
+            }
+            item {
+                StructuredInfoCard(
+                    section = copy.uvSection,
+                    icon = Icons.Rounded.Verified,
+                    tint = GoldenSun,
+                    onOpenUrl = { uriHandler.openUri(it) }
                 )
             }
         }
@@ -1366,24 +1470,140 @@ private fun InfoScreen(copy: Copybook, onClose: () -> Unit) {
 }
 
 @Composable
-private fun InfoGroupCard(title: String, entries: List<InfoLevelEntry>) {
+private fun InfoSectionHeader(title: String) {
+    Text(
+        text = title.uppercase(),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f)
+    )
+}
+
+@Composable
+private fun InfoIntroCard(text: String) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = Color(0xFFFFF0D7)
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(18.dp),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+    }
+}
+
+private data class InfoScaleEntry(
+    val level: String,
+    val title: String,
+    val tint: Color
+)
+
+@Composable
+private fun InfoScaleCard(title: String, entries: List<InfoScaleEntry>) {
     FrostedCard {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onBackground)
-            entries.forEachIndexed { index, entry ->
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    entries.forEach { entry ->
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(entry.tint.copy(alpha = 0.92f))
+                        )
+                    }
+                }
+            }
+
+            entries.forEach { entry ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(entry.tint.copy(alpha = 0.10f))
+                        .border(
+                            width = 1.dp,
+                            color = entry.tint.copy(alpha = 0.18f),
+                            shape = RoundedCornerShape(18.dp)
+                        )
+                        .padding(horizontal = 14.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
                     Box(
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
                             .background(entry.tint),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(entry.level, color = ColorWhite, style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            text = entry.level,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = ColorWhite
+                        )
                     }
-                    Text(entry.title, style = MaterialTheme.typography.titleMedium, color = entry.tint)
+                    Text(
+                        text = entry.title,
+                        modifier = Modifier
+                            .weight(1f)
+                            .widthIn(min = 0.dp),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
                 }
-                if (index < entries.lastIndex) {
+            }
+        }
+    }
+}
+
+@Composable
+private fun StructuredInfoCard(
+    section: Copybook.InfoSection,
+    icon: ImageVector,
+    tint: Color,
+    onOpenUrl: (String) -> Unit = {}
+) {
+    FrostedCard {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = tint
+                )
+                Text(
+                    text = section.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+
+            section.groups.forEachIndexed { index, group ->
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = group.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = tint
+                    )
+
+                    group.bullets.forEach { bullet ->
+                        InfoBulletRow(bullet = bullet, tint = tint, onOpenUrl = onOpenUrl)
+                    }
+                }
+
+                if (index < section.groups.lastIndex) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1396,11 +1616,98 @@ private fun InfoGroupCard(title: String, entries: List<InfoLevelEntry>) {
     }
 }
 
-private data class InfoLevelEntry(
-    val level: String,
-    val title: String,
-    val tint: Color
-)
+@Composable
+private fun InfoBulletRow(
+    bullet: Copybook.InfoBullet,
+    tint: Color,
+    onOpenUrl: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .padding(top = 7.dp)
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(tint)
+            )
+            Text(
+                text = bullet.text,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        }
+
+        bullet.cta?.let { cta ->
+            Surface(
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+                onClick = { onOpenUrl(cta.url) },
+                shape = RoundedCornerShape(999.dp),
+                color = tint
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Call,
+                        contentDescription = null,
+                        tint = ColorWhite,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = cta.label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = ColorWhite
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InfoChecklistCard(label: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(SkyBlue),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Info,
+                    contentDescription = null,
+                    tint = ColorWhite
+                )
+            }
+            Text(
+                text = label,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        }
+    }
+}
 
 @Composable
 private fun OnboardingScreen(
@@ -1409,7 +1716,7 @@ private fun OnboardingScreen(
     onAllow: () -> Unit,
     onSkip: () -> Unit
 ) {
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(
@@ -1425,20 +1732,32 @@ private fun OnboardingScreen(
             .navigationBarsPadding()
             .padding(horizontal = 24.dp, vertical = 32.dp)
     ) {
+        val compactLayout = maxHeight < 760.dp
+        val contentModifier = if (compactLayout) {
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+        } else {
+            Modifier.fillMaxSize()
+        }
+
         Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.SpaceBetween,
+            modifier = contentModifier,
+            verticalArrangement = if (compactLayout) Arrangement.spacedBy(24.dp) else Arrangement.SpaceBetween,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(1.dp))
+            if (!compactLayout) {
+                Spacer(modifier = Modifier.height(1.dp))
+            }
+
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(
                     imageVector = Icons.Rounded.WarningAmber,
                     contentDescription = null,
                     tint = ColorWhite,
-                    modifier = Modifier.size(88.dp)
+                    modifier = Modifier.size(if (compactLayout) 72.dp else 88.dp)
                 )
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(if (compactLayout) 16.dp else 24.dp))
                 Text(copy.onboardingWelcomeTitle, style = MaterialTheme.typography.displayMedium, color = ColorWhite, textAlign = TextAlign.Center)
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(copy.onboardingWelcomeText, style = MaterialTheme.typography.bodyLarge, color = ColorWhite.copy(alpha = 0.92f), textAlign = TextAlign.Center)

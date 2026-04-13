@@ -43,13 +43,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun refreshAll() {
-        val worksites = _uiState.value.worksites
-        val languageCode = _uiState.value.appLanguage.resolvedLanguage().code
         if (_uiState.value.isRefreshing) return
 
         viewModelScope.launch {
             _uiState.update { it.copy(isRefreshing = true) }
 
+            val currentState = _uiState.value
+            val worksites = currentState.worksites
             val nextSnapshots = _uiState.value.snapshots.toMutableMap()
 
             worksites.forEach { worksite ->
@@ -60,7 +60,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     .onFailure { }
             }
 
-            subscriptionManager.syncTopics(worksites.map(Worksite::coordinate), languageCode)
+            reconcilePushSubscriptions(
+                state = currentState.copy(worksites = worksites),
+                forceUnsubscribeWhenDisabled = true
+            )
 
             _uiState.update {
                 it.copy(
@@ -104,7 +107,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     it.copy(
                         addressSearchMessage = when (validationError) {
                             is DashboardDataError.MunicipalityNotFound -> copy.addOutsideAustriaMessage
-                            else -> copy.addressSearchFailedMessage
+                            is DashboardDataError.Network -> copy.liveDataUnavailableMessage
+                            else -> copy.workplaceCouldNotBeAddedMessage
                         }
                     )
                 }
@@ -128,12 +132,20 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun deleteWorksite(id: String) {
         viewModelScope.launch {
-            val updatedWorksites = _uiState.value.worksites.filterNot { it.id == id }
+            val currentState = _uiState.value
+            val updatedWorksites = currentState.worksites.filterNot { it.id == id }
             val updatedSnapshots = _uiState.value.snapshots - id
-            val languageCode = _uiState.value.appLanguage.resolvedLanguage().code
+            val updatedDisabledPushWorksiteIds = currentState.disabledPushWorksiteIds - id
             appStorage.saveWorksites(updatedWorksites)
+            appStorage.saveDisabledPushWorksiteIds(updatedDisabledPushWorksiteIds)
 
-            subscriptionManager.syncTopics(updatedWorksites.map(Worksite::coordinate), languageCode)
+            reconcilePushSubscriptions(
+                state = currentState.copy(
+                    worksites = updatedWorksites,
+                    disabledPushWorksiteIds = updatedDisabledPushWorksiteIds
+                ),
+                forceUnsubscribeWhenDisabled = true
+            )
 
             _uiState.update {
                 it.copy(
@@ -152,9 +164,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     fun setLanguage(language: AppLanguage) {
         viewModelScope.launch {
             appStorage.saveAppLanguage(language)
-            val worksites = _uiState.value.worksites
-            val languageCode = language.resolvedLanguage().code
-            subscriptionManager.syncTopics(worksites.map(Worksite::coordinate), languageCode)
+            if (_uiState.value.isPushEnabled) {
+                reconcilePushSubscriptions(_uiState.value.copy(appLanguage = language))
+            }
         }
     }
 
@@ -164,6 +176,36 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             appStorage.saveCustomGeoSphereUrl(url)
         }
     }
+
+    fun setPushNotificationsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            val currentState = _uiState.value
+            appStorage.savePushNotificationsEnabled(enabled)
+            reconcilePushSubscriptions(
+                state = currentState.copy(isPushEnabled = enabled),
+                forceUnsubscribeWhenDisabled = true
+            )
+        }
+    }
+
+    fun setWorksitePushEnabled(worksiteId: String, enabled: Boolean) {
+        viewModelScope.launch {
+            val currentState = _uiState.value
+            val updatedDisabledIds = if (enabled) {
+                currentState.disabledPushWorksiteIds - worksiteId
+            } else {
+                currentState.disabledPushWorksiteIds + worksiteId
+            }
+            appStorage.saveDisabledPushWorksiteIds(updatedDisabledIds)
+            reconcilePushSubscriptions(
+                state = currentState.copy(disabledPushWorksiteIds = updatedDisabledIds),
+                forceUnsubscribeWhenDisabled = false
+            )
+        }
+    }
+
+    fun isPushEnabledForWorksite(worksiteId: String): Boolean =
+        worksiteId !in _uiState.value.disabledPushWorksiteIds
 
     fun completeOnboarding(skipPushRegistration: Boolean) {
         viewModelScope.launch {
@@ -180,14 +222,36 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun observeStoredState() {
         viewModelScope.launch {
-            combine(
+            val baseStoredState = combine(
                 appStorage.worksites,
                 appStorage.appLanguage,
                 appStorage.appTheme,
                 appStorage.hasCompletedOnboarding,
                 appStorage.customGeoSphereUrl
             ) { worksites, appLanguage, appTheme, hasCompletedOnboarding, customGeoSphereUrl ->
-                StoredState(worksites, appLanguage, appTheme, hasCompletedOnboarding, customGeoSphereUrl)
+                BaseStoredState(
+                    worksites = worksites,
+                    appLanguage = appLanguage,
+                    appTheme = appTheme,
+                    hasCompletedOnboarding = hasCompletedOnboarding,
+                    customGeoSphereUrl = customGeoSphereUrl
+                )
+            }
+
+            combine(
+                baseStoredState,
+                appStorage.isPushNotificationsEnabled,
+                appStorage.disabledPushWorksiteIds
+            ) { baseState, isPushEnabled, disabledPushWorksiteIds ->
+                StoredState(
+                    worksites = baseState.worksites,
+                    appLanguage = baseState.appLanguage,
+                    appTheme = baseState.appTheme,
+                    hasCompletedOnboarding = baseState.hasCompletedOnboarding,
+                    customGeoSphereUrl = baseState.customGeoSphereUrl,
+                    isPushEnabled = isPushEnabled,
+                    disabledPushWorksiteIds = disabledPushWorksiteIds
+                )
             }.collect { storedState ->
                 _uiState.update {
                     it.copy(
@@ -196,12 +260,35 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                         appTheme = storedState.appTheme,
                         hasCompletedOnboarding = storedState.hasCompletedOnboarding,
                         showsCustomGeoSphereUrlSetting = AppFeatureFlags.enableCustomGeoSphereUrlSetting,
-                        customGeoSphereUrl = storedState.customGeoSphereUrl
+                        customGeoSphereUrl = storedState.customGeoSphereUrl,
+                        isPushEnabled = storedState.isPushEnabled,
+                        disabledPushWorksiteIds = storedState.disabledPushWorksiteIds
                     )
                 }
             }
         }
     }
+
+    private suspend fun reconcilePushSubscriptions(
+        state: DashboardUiState,
+        forceUnsubscribeWhenDisabled: Boolean = false
+    ) {
+        val error = when {
+            !state.isPushEnabled && forceUnsubscribeWhenDisabled -> subscriptionManager.unsubscribeAll()
+            !state.isPushEnabled -> null
+            else -> subscriptionManager.syncTopics(
+                activePushWorksites(state).map(Worksite::coordinate),
+                state.appLanguage.resolvedLanguage().code
+            )
+        }
+
+        if (error != null) {
+            // Keep failures silent in UI for now, matching existing behavior.
+        }
+    }
+
+    private fun activePushWorksites(state: DashboardUiState): List<Worksite> =
+        state.worksites.filter { it.id !in state.disabledPushWorksiteIds }
 
     private fun performAddressSearch(query: String) {
         viewModelScope.launch {
@@ -236,7 +323,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     _uiState.update {
                         it.copy(
                             addressResults = emptyList(),
-                            addressSearchMessage = searchResult.message.ifBlank { copy.addressSearchFailedMessage },
+                            addressSearchMessage = copy.addressSearchFailedMessage,
                             isSearchingAddress = false
                         )
                     }
@@ -248,6 +335,16 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     private fun currentCopy() = org.entner.HitzeV.ui.copy.Copybook(_uiState.value.appLanguage.resolvedLanguage())
 
     private data class StoredState(
+        val worksites: List<Worksite>,
+        val appLanguage: AppLanguage,
+        val appTheme: AppTheme,
+        val hasCompletedOnboarding: Boolean,
+        val customGeoSphereUrl: String,
+        val isPushEnabled: Boolean,
+        val disabledPushWorksiteIds: Set<String>
+    )
+
+    private data class BaseStoredState(
         val worksites: List<Worksite>,
         val appLanguage: AppLanguage,
         val appTheme: AppTheme,
@@ -270,5 +367,7 @@ data class DashboardUiState(
     val hasCompletedOnboarding: Boolean = false,
     val isRequestingNotifications: Boolean = false,
     val showsCustomGeoSphereUrlSetting: Boolean = false,
-    val customGeoSphereUrl: String = ""
+    val customGeoSphereUrl: String = "",
+    val isPushEnabled: Boolean = true,
+    val disabledPushWorksiteIds: Set<String> = emptySet()
 )

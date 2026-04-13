@@ -20,8 +20,10 @@ final class DashboardViewModel: ObservableObject {
     @Published var worksites: [Worksite]
     @Published var addressQuery: String = ""
     @Published var nameInput: String = ""
+    @Published private(set) var isPushNotificationsEnabled: Bool
+    @Published private(set) var disabledPushWorksiteIDs: Set<UUID>
     @Published private(set) var addressResults: [AddressSearchResult] = []
-    @Published private(set) var addressSearchMessage: String?
+    @Published private(set) var addressSearchMessage: DashboardUserMessage?
     @Published private(set) var isSearchingAddress = false
     @Published private(set) var snapshots: [UUID: WorksiteSnapshot] = [:]
     @Published private(set) var isRefreshing = false
@@ -34,6 +36,8 @@ final class DashboardViewModel: ObservableObject {
     private let mockModeController: MockModeController
     private let userDefaults: UserDefaults
     private let storageKey = "dashboard.worksites.v1"
+    private let pushEnabledKey = "push.notifications.enabled"
+    private let disabledPushWorksiteIDsKey = "push.notifications.disabledWorksiteIds"
     private var hasLoaded = false
     private var refreshTask: Task<Void, Never>?
 
@@ -54,6 +58,15 @@ final class DashboardViewModel: ObservableObject {
         } else {
             self.worksites = []
         }
+
+        if let storedValue = userDefaults.object(forKey: pushEnabledKey) as? Bool {
+            self.isPushNotificationsEnabled = storedValue
+        } else {
+            self.isPushNotificationsEnabled = true
+        }
+
+        let disabledIDs = userDefaults.stringArray(forKey: disabledPushWorksiteIDsKey) ?? []
+        self.disabledPushWorksiteIDs = Set(disabledIDs.compactMap(UUID.init(uuidString:)))
 
         setupSubscribers()
     }
@@ -135,13 +148,7 @@ final class DashboardViewModel: ObservableObject {
 
         snapshots = nextSnapshots
 
-        await subscriptionManager.syncTopics(
-            for: worksites.map(\.coordinate),
-            languageCode: currentPushLanguageCode()
-        )
-        if let error = subscriptionManager.lastError?.errorDescription {
-            NSLog("Subscription sync failed: %@", error)
-        }
+        await reconcilePushSubscriptions(forceUnsubscribeWhenDisabled: true)
     }
 
     private func setupSubscribers() {
@@ -163,7 +170,7 @@ final class DashboardViewModel: ObservableObject {
         let query = addressQuery.trimmed
         guard !query.isEmpty else {
             addressResults = []
-            addressSearchMessage = "Bitte eine Adresse eingeben. / Please enter an address."
+            addressSearchMessage = .enterAddress
             return
         }
 
@@ -184,14 +191,14 @@ final class DashboardViewModel: ObservableObject {
 
             guard !mapped.isEmpty else {
                 addressResults = []
-                addressSearchMessage = "Keine passende Adresse gefunden. / No matching address found."
+                addressSearchMessage = .noMatchingAddress
                 return
             }
 
             addressResults = mapped
         } catch {
             addressResults = []
-            addressSearchMessage = "Adresssuche fehlgeschlagen. / Address search failed."
+            addressSearchMessage = .addressSearchFailed
         }
     }
 
@@ -203,11 +210,11 @@ final class DashboardViewModel: ObservableObject {
                 _ = try await dataService.fetchSnapshot(for: result.coordinate)
             } catch {
                 if isOutsideAustriaMunicipalityError(error) {
-                    addressSearchMessage = "Dieses Gebiet liegt vermutlich außerhalb Österreichs oder wird von GeoSphere nicht erkannt. Ein Hinzufügen ist nicht möglich. / This area is likely outside Austria or not recognized by GeoSphere. Adding is not possible."
+                    addressSearchMessage = .unsupportedArea
                     return false
                 }
 
-                addressSearchMessage = error.localizedDescription
+                addressSearchMessage = userMessage(for: error)
                 return false
             }
         }
@@ -249,16 +256,15 @@ final class DashboardViewModel: ObservableObject {
             snapshots.removeValue(forKey: id)
         }
 
+        disabledPushWorksiteIDs.subtract(removedIDs)
         persistWorksites()
+        persistDisabledPushWorksiteIDs()
 
         guard !mockModeController.isEnabled else {
             return
         }
 
-        await subscriptionManager.syncTopics(
-            for: worksites.map(\.coordinate),
-            languageCode: currentPushLanguageCode()
-        )
+        await reconcilePushSubscriptions(forceUnsubscribeWhenDisabled: true)
     }
 
     func deleteWorksite(id: UUID) async {
@@ -274,10 +280,38 @@ final class DashboardViewModel: ObservableObject {
             return
         }
 
-        await subscriptionManager.syncTopics(
-            for: worksites.map(\.coordinate),
-            languageCode: currentPushLanguageCode()
-        )
+        await reconcilePushSubscriptions(forceUnsubscribeWhenDisabled: true)
+    }
+
+    func setPushNotificationsEnabled(_ isEnabled: Bool) async {
+        isPushNotificationsEnabled = isEnabled
+        userDefaults.set(isEnabled, forKey: pushEnabledKey)
+
+        guard !mockModeController.isEnabled else {
+            return
+        }
+
+        await reconcilePushSubscriptions(forceUnsubscribeWhenDisabled: true)
+    }
+
+    func setPushEnabled(_ isEnabled: Bool, forWorksiteID worksiteID: UUID) async {
+        if isEnabled {
+            disabledPushWorksiteIDs.remove(worksiteID)
+        } else {
+            disabledPushWorksiteIDs.insert(worksiteID)
+        }
+
+        persistDisabledPushWorksiteIDs()
+
+        guard !mockModeController.isEnabled, isPushNotificationsEnabled else {
+            return
+        }
+
+        await reconcilePushSubscriptions(forceUnsubscribeWhenDisabled: false)
+    }
+
+    func isPushEnabled(forWorksiteID worksiteID: UUID) -> Bool {
+        !disabledPushWorksiteIDs.contains(worksiteID)
     }
 
     private func mapAddressResults(from mapItems: [MKMapItem]) -> [AddressSearchResult] {
@@ -336,12 +370,42 @@ final class DashboardViewModel: ObservableObject {
             return fallbackName
         }
 
-        return "Unbekannte Adresse"
+        return String(
+            format: "%.4f, %.4f",
+            mapItem.placemark.coordinate.latitude,
+            mapItem.placemark.coordinate.longitude
+        )
     }
 
     private func persistWorksites() {
         if let encoded = try? JSONEncoder().encode(worksites) {
             userDefaults.set(encoded, forKey: storageKey)
+        }
+    }
+
+    private func persistDisabledPushWorksiteIDs() {
+        userDefaults.set(
+            disabledPushWorksiteIDs.map(\.uuidString).sorted(),
+            forKey: disabledPushWorksiteIDsKey
+        )
+    }
+
+    private func activePushWorksites() -> [Worksite] {
+        worksites.filter { !disabledPushWorksiteIDs.contains($0.id) }
+    }
+
+    private func reconcilePushSubscriptions(forceUnsubscribeWhenDisabled: Bool) async {
+        if isPushNotificationsEnabled {
+            await subscriptionManager.syncTopics(
+                for: activePushWorksites().map(\.coordinate),
+                languageCode: currentPushLanguageCode()
+            )
+        } else if forceUnsubscribeWhenDisabled {
+            await subscriptionManager.unsubscribeAll()
+        }
+
+        if let error = subscriptionManager.lastError?.errorDescription {
+            NSLog("Subscription sync failed: %@", error)
         }
     }
 
@@ -351,6 +415,19 @@ final class DashboardViewModel: ObservableObject {
         }
 
         return true
+    }
+
+    private func userMessage(for error: Error) -> DashboardUserMessage {
+        switch error {
+        case DashboardDataError.invalidRequest,
+            DashboardDataError.invalidGeoSphereResponse,
+            DashboardDataError.network:
+            return .liveDataUnavailable
+        case DashboardDataError.municipalityNotFound:
+            return .unsupportedArea
+        default:
+            return .workplaceCouldNotBeAdded
+        }
     }
 
     private func currentPushLanguageCode() -> String {

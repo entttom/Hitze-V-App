@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Hitze-V</string>
+    <string name="notification_channel_name">Twissijiet tas-sħana</string>
+    <string name="notification_channel_description">Notifiki għal twissijiet tas-sħana</string>
+</resources>

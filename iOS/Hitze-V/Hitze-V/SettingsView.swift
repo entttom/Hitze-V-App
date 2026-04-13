@@ -19,6 +19,7 @@ enum AppTheme: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     let copy: Copybook
+    @ObservedObject private var viewModel: DashboardViewModel
     let onActivateMockMode: () -> Void
     
     @AppStorage("dashboard.language") private var languageRawValue = AppLanguage.system.rawValue
@@ -30,10 +31,12 @@ struct SettingsView: View {
 
     init(
         copy: Copybook,
+        viewModel: DashboardViewModel,
         mockModeController: MockModeController = .shared,
         onActivateMockMode: @escaping () -> Void = {}
     ) {
         self.copy = copy
+        _viewModel = ObservedObject(wrappedValue: viewModel)
         self.onActivateMockMode = onActivateMockMode
         _mockModeController = ObservedObject(wrappedValue: mockModeController)
     }
@@ -64,13 +67,67 @@ struct SettingsView: View {
                 }
                 
                 Section(header: Text(copy.languageSection)) {
-                    Picker(copy.languageSection, selection: $languageRawValue) {
-                        ForEach(AppLanguage.allCases) { language in
-                            Text(copy.languageOption(language))
-                                .tag(language.rawValue)
+                    NavigationLink {
+                        LanguageSelectionView(copy: copy, languageRawValue: $languageRawValue)
+                    } label: {
+                        HStack {
+                            Text(copy.languageOption(selectedLanguage))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Spacer()
                         }
                     }
-                    .pickerStyle(.inline)
+                }
+
+                Section(
+                    header: Text(copy.pushNotificationsSection),
+                    footer: Text(copy.pushNotificationsDescription)
+                ) {
+                    Toggle(
+                        copy.pushNotificationsEnabledLabel,
+                        isOn: Binding(
+                            get: { viewModel.isPushNotificationsEnabled },
+                            set: { newValue in
+                                Task {
+                                    await viewModel.setPushNotificationsEnabled(newValue)
+                                }
+                            }
+                        )
+                    )
+                }
+
+                Section(header: Text(copy.pushWorksitesSectionTitle)) {
+                    if viewModel.worksites.isEmpty {
+                        Text(copy.pushNoWorksitesMessage)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(viewModel.worksites) { worksite in
+                            Toggle(
+                                isOn: Binding(
+                                    get: { viewModel.isPushEnabled(forWorksiteID: worksite.id) },
+                                    set: { newValue in
+                                        Task {
+                                            await viewModel.setPushEnabled(newValue, forWorksiteID: worksite.id)
+                                        }
+                                    }
+                                )
+                                ) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(worksite.name)
+                                        .foregroundStyle(.primary)
+                                    Text(
+                                        worksite.address?
+                                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                                            .nonEmpty ?? copy.pushWorksiteFallbackSubtitle
+                                    )
+                                        .font(.footnote)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .disabled(!viewModel.isPushNotificationsEnabled)
+                            .opacity(viewModel.isPushNotificationsEnabled ? 1 : 0.55)
+                        }
+                    }
                 }
 
                 if AppFeatureFlags.enableCustomGeoSphereURLSetting {
@@ -131,6 +188,12 @@ struct SettingsView: View {
                     .font(.system(.footnote, design: .rounded).weight(.semibold))
             }
 
+            Text(copy.machineTranslationDisclaimer)
+                .font(.system(.caption2, design: .rounded))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
             if mockModeController.isEnabled {
                 Text(copy.mockModeSessionHint)
                     .font(.system(.caption2, design: .rounded))
@@ -166,5 +229,44 @@ struct SettingsView: View {
         .animation(.easeInOut(duration: 0.2), value: isPressingAboutCard)
         .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
         .listRowBackground(Color.clear)
+    }
+}
+
+private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
+
+private struct LanguageSelectionView: View {
+    @Environment(\.dismiss) private var dismiss
+    let copy: Copybook
+    @Binding var languageRawValue: String
+
+    private var selectedLanguage: AppLanguage {
+        AppLanguage(rawValue: languageRawValue) ?? .system
+    }
+
+    var body: some View {
+        List {
+            ForEach(AppLanguage.allCases) { language in
+                Button {
+                    languageRawValue = language.rawValue
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text(copy.languageOption(language))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        if language == selectedLanguage {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(.tint)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle(copy.languageSection)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

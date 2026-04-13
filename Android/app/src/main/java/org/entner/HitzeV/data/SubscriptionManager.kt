@@ -10,6 +10,21 @@ class SubscriptionManager(
     private val dashboardDataService: DashboardDataService,
     private val firebaseRegistrationManager: FirebaseRegistrationManager
 ) {
+    suspend fun unsubscribeAll(): SubscriptionError? {
+        val currentTopics = appStorage.subscribedMunicipalityIds.first()
+        val storedLanguageCode = appStorage.lastSubscribedLanguageCode.first()
+        val currentLanguageCode = storedLanguageCode ?: "en"
+        val syncErrors = synchronizeTopics(
+            desiredMunicipalityIds = emptySet(),
+            currentTopics = currentTopics,
+            previousLanguageCode = currentLanguageCode,
+            desiredLanguageCode = currentLanguageCode,
+            hasStoredLanguageCode = storedLanguageCode != null,
+            allowUnsubscribe = true
+        )
+        return applyErrors(syncErrors)
+    }
+
     suspend fun syncTopics(coordinates: List<GeoCoordinate>, languageCode: String): SubscriptionError? {
         val normalizedLanguageCode = normalizeLanguageCode(languageCode)
         val currentTopics = appStorage.subscribedMunicipalityIds.first()

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Hitze-V</string>
+    <string name="notification_channel_name">Alertes chaleur</string>
+    <string name="notification_channel_description">Notifications pour les alertes chaleur</string>
+</resources>

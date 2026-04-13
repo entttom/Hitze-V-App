@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Hitze-V</string>
+    <string name="notification_channel_name">Sıcaklık uyarıları</string>
+    <string name="notification_channel_description">Sıcaklık uyarıları için bildirimler</string>
+</resources>

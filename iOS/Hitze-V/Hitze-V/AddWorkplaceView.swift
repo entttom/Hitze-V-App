@@ -6,7 +6,7 @@ struct AddWorkplaceView: View {
     let copy: Copybook
     @Environment(\.dismiss) private var dismiss
     @FocusState private var isSearchFocused: Bool
-    @State private var addFailureMessage: String?
+    @State private var addFailureMessage: DashboardUserMessage?
 
     private var buttonBackground: LinearGradient {
         LinearGradient(
@@ -36,9 +36,8 @@ struct AddWorkplaceView: View {
                         .padding(20)
                         
                         // Messages & Loading state
-                        if let addressSearchMessage = viewModel.addressSearchMessage,
-                           !addressSearchMessage.isEmpty {
-                            Label(addressSearchMessage, systemImage: "info.circle.fill")
+                        if let addressSearchMessage = viewModel.addressSearchMessage {
+                            Label(copy.text(for: addressSearchMessage), systemImage: "info.circle.fill")
                                 .font(.system(.subheadline, design: .rounded))
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 20)
@@ -73,7 +72,7 @@ struct AddWorkplaceView: View {
                 }
             }
             .alert(
-                copy.t("Hinzufügen nicht möglich", "Unable to add"),
+                copy.addWorkplaceFailureTitle,
                 isPresented: Binding(
                     get: { addFailureMessage != nil },
                     set: { isPresented in
@@ -85,7 +84,7 @@ struct AddWorkplaceView: View {
             ) {
                 Button(copy.cancelButton, role: .cancel) { }
             } message: {
-                Text(addFailureMessage ?? "")
+                Text(addFailureMessage.map(copy.text(for:)) ?? "")
             }
         }
     }
@@ -102,7 +101,7 @@ struct AddWorkplaceView: View {
                     .foregroundStyle(.tertiary)
                     .font(.system(size: 16, weight: .medium))
                 
-                TextField(copy.t("Optional", "Optional"), text: $viewModel.nameInput)
+                TextField(copy.optionalFieldPlaceholder, text: $viewModel.nameInput)
                     .font(.system(.body, design: .rounded))
             }
             .padding(14)
@@ -123,7 +122,7 @@ struct AddWorkplaceView: View {
                     .foregroundStyle(isSearchFocused ? Color(red: 0.14, green: 0.66, blue: 0.86) : Color.primary.opacity(0.3))
                     .font(.system(size: 16, weight: .medium))
                 
-                TextField(copy.t("Stadt, Straße...", "City, Street..."), text: $viewModel.addressQuery)
+                TextField(copy.cityStreetPlaceholder, text: $viewModel.addressQuery)
                     .font(.system(.body, design: .rounded))
                     .textInputAutocapitalization(.words)
                     .submitLabel(.search)
@@ -204,10 +203,7 @@ struct AddWorkplaceView: View {
                                     dismiss()
                                 } else {
                                     addFailureMessage = viewModel.addressSearchMessage
-                                        ?? copy.t(
-                                            "Der Arbeitsplatz konnte nicht hinzugefügt werden.",
-                                            "The workplace could not be added."
-                                        )
+                                        ?? .workplaceCouldNotBeAdded
                                 }
                             }
                         }

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Hitze-V</string>
+    <string name="notification_channel_name">Karščio įspėjimai</string>
+    <string name="notification_channel_description">Pranešimai apie karščio įspėjimus</string>
+</resources>

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Hitze-V</string>
+    <string name="notification_channel_name">Rabhaidh teasa</string>
+    <string name="notification_channel_description">Fógraí le haghaidh rabhaidh teasa</string>
+</resources>

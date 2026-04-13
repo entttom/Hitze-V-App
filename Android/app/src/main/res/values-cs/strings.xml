@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Hitze-V</string>
+    <string name="notification_channel_name">Upozornění na horko</string>
+    <string name="notification_channel_description">Oznámení při varování před horkem</string>
+</resources>

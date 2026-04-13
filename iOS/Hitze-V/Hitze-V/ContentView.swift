@@ -66,7 +66,7 @@ struct ContentView: View {
                 AddWorkplaceView(viewModel: viewModel, copy: copy)
             }
             .sheet(isPresented: $isShowingSettings) {
-                SettingsView(copy: copy) {
+                SettingsView(copy: copy, viewModel: viewModel) {
                     Task {
                         await viewModel.refreshAll()
                     }
@@ -299,48 +299,11 @@ struct ContentView: View {
             return copy.notAvailableShort
         }
 
-        return String(format: "%.1f C", value)
+        return String(format: "%.1f°C", value)
     }
 }
 
 private struct WorksiteCard: View {
-    private enum UvExposureLevel {
-        case none
-        case level35
-        case level67
-        case level810
-        case level11Plus
-
-        init(uvIndex: Double?) {
-            guard let uvIndex else {
-                self = .none
-                return
-            }
-
-            switch uvIndex {
-            case ..<3:
-                self = .none
-            case ..<6:
-                self = .level35
-            case ..<8:
-                self = .level67
-            case ..<11:
-                self = .level810
-            default:
-                self = .level11Plus
-            }
-        }
-
-        var isWarning: Bool {
-            switch self {
-            case .level67, .level810, .level11Plus:
-                return true
-            case .none, .level35:
-                return false
-            }
-        }
-    }
-
     let copy: Copybook
     let worksite: Worksite
     let snapshot: WorksiteSnapshot?
@@ -377,52 +340,19 @@ private struct WorksiteCard: View {
         RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous)
     }
 
-    private var uvExposureLevel: UvExposureLevel {
-        UvExposureLevel(uvIndex: snapshot?.uvIndex)
-    }
-
-    private var isUvRestrictionWindow: Bool {
-        let hour = Self.viennaCalendar.component(.hour, from: Date())
-        return hour >= 11 && hour < 15
+    private var showsUvWarningBadge: Bool {
+        guard let uvIndex = snapshot?.uvIndex else {
+            return false
+        }
+        return uvIndex >= 5
     }
 
     private var uvWarningBadgeTitle: String? {
-        switch uvExposureLevel {
-        case .level67:
-            return copy.uvWarningBadge67
-        case .level810:
-            return copy.uvWarningBadge810
-        case .level11Plus:
-            return copy.uvWarningBadge11Plus
-        case .none, .level35:
-            return nil
-        }
-    }
-
-    private var uvWarningDetail: String? {
-        switch uvExposureLevel {
-        case .level67:
-            return isUvRestrictionWindow ? copy.uvWarningDetail67 : copy.uvWarningDetail67OutsideWindow
-        case .level810:
-            return isUvRestrictionWindow ? copy.uvWarningDetail810 : copy.uvWarningDetail810OutsideWindow
-        case .level11Plus:
-            return copy.uvWarningDetail11Plus
-        case .none, .level35:
-            return nil
-        }
+        showsUvWarningBadge ? copy.uvWarningBadge5Plus : nil
     }
 
     private var uvWarningTint: Color {
-        switch uvExposureLevel {
-        case .level67:
-            return Color(red: 0.95, green: 0.52, blue: 0.18)
-        case .level810:
-            return Color(red: 0.85, green: 0.24, blue: 0.20)
-        case .level11Plus:
-            return Color(red: 0.42, green: 0.45, blue: 0.50)
-        case .none, .level35:
-            return .clear
-        }
+        Color(red: 0.95, green: 0.52, blue: 0.18)
     }
 
     private var isDeleteHighlightActive: Bool {
@@ -483,14 +413,6 @@ private struct WorksiteCard: View {
                     Text(snapshot.municipalityName)
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(detailColor)
-
-                    if let uvWarningDetail {
-                        Label(uvWarningDetail, systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(.caption2, design: .rounded).weight(.semibold))
-                            .foregroundStyle(uvWarningTint)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 2)
-                    }
 
                     if !snapshot.forecasts.isEmpty {
                         HStack(spacing: 8) {
@@ -614,7 +536,7 @@ private struct WorksiteCard: View {
 
     private func uvText(_ value: Double?) -> String {
         guard let value else {
-            return "UV n/a"
+            return "UV \(copy.notAvailableShort)"
         }
 
         return String(format: "UV %.1f", value)
@@ -625,7 +547,7 @@ private struct WorksiteCard: View {
             return copy.notAvailableShort
         }
 
-        return String(format: "%.1f C", value)
+        return String(format: "%.1f°C", value)
     }
 
     private func forecastWarningLines(_ forecasts: [DailyForecast]) -> [(dayLabel: String, timeText: String)] {
@@ -1032,6 +954,26 @@ enum ResolvedLanguage {
 struct Copybook {
     let language: ResolvedLanguage
 
+    struct InfoGroup {
+        let title: String
+        let bullets: [InfoBullet]
+    }
+
+    struct InfoSection {
+        let title: String
+        let groups: [InfoGroup]
+    }
+
+    struct InfoBullet {
+        let text: String
+        let cta: InfoCTA?
+    }
+
+    struct InfoCTA {
+        let label: String
+        let url: URL
+    }
+
     func t(_ german: String, _ english: String) -> String {
         switch language {
         case .de:
@@ -1039,10 +981,27 @@ struct Copybook {
         case .en:
             return english
         default:
-            return Self.translations[language]?[english]
-                ?? Self.longTextTranslations[language]?[english]
-                ?? english
+            if let translated = CopybookTranslationCatalog.translation(for: language, english: english) {
+                return translated
+            }
+
+            if let translated = Self.translations[language]?[english] {
+                return translated
+            }
+
+            if let translated = Self.longTextTranslations[language]?[english] {
+                return translated
+            }
+
+            assertionFailure("Missing translation for \(language.languageCode): \(english)")
+            return english
         }
+    }
+
+    private func bulletLines(_ german: String, _ english: String) -> [InfoBullet] {
+        t(german, english)
+            .split(separator: "\n")
+            .map { InfoBullet(text: String($0), cta: nil) }
     }
 
     var shortTitle: String { t("Hitze-V", "Heat-V") }
@@ -1067,7 +1026,6 @@ struct Copybook {
     var noWorkplaces: String { t("Noch keine Arbeitsplätze vorhanden.", "No workplaces yet.") }
     var loading: String { t("Lade Live-Daten", "Loading live data") }
     var deleteWorkplace: String { t("Arbeitsplatz löschen", "Delete workplace") }
-    func deleteWorkplaceMessage(_ name: String) -> String { t("Der Arbeitsplatz \"\(name)\" wird gelöscht.", "The workplace \"\(name)\" will be deleted.") }
     var topicSectionTitle: String { t("Aktive Topic-Abos", "Active Topic Subscriptions") }
     var noTopics: String { t("Keine aktiven Topic-Abos", "No active topic subscriptions") }
     var refreshButton: String { t("Daten aktualisieren", "Refresh data") }
@@ -1079,14 +1037,187 @@ struct Copybook {
     var infoButtonLabel: String { t("Info öffnen", "Open info") }
     var infoScreenTitle: String { t("Info", "Info") }
     var infoScreenHeatMeasuresTitle: String { t("Hitze-Schutzmaßnahmen", "Heat Protection Measures") }
+    var infoScreenHeatScaleTitle: String { t("Skala der Hitzewarnstufen", "Heat warning scale") }
     var infoScreenUvMeasuresTitle: String { t("UV-Schutzmaßnahmen", "UV Protection Measures") }
-    var infoScreenUvLevel35Title: String { t("UV-Index 3-5", "UV Index 3-5") }
-    var infoScreenUvLevel67Title: String { t("UV-Index 6-7", "UV Index 6-7") }
-    var infoScreenUvLevel810Title: String { t("UV-Index 8-10", "UV Index 8-10") }
-    var infoScreenUvLevel11Title: String { t("UV-Index >= 11", "UV Index >= 11") }
+    var infoScreenUvLevel5Title: String { t("UV-Index >= 5", "UV Index >= 5") }
     var infoScreenLevel2Title: String { t("2 (gefühlte Temperatur ≥ 30 °C)", "2 (apparent temperature ≥ 30 °C)") }
     var infoScreenLevel3Title: String { t("3 (gefühlte Temperatur ≥ 35 °C)", "3 (apparent temperature ≥ 35 °C)") }
     var infoScreenLevel4Title: String { t("4 (gefühlte Temperatur ≥ 40 °C)", "4 (apparent temperature ≥ 40 °C)") }
+    var infoIntro: String {
+        t(
+            "Ab einer Hitzewarnung der Stufe 2 (ab 30 °C) müssen ein Maßnahmenprogramm und Notfallmaßnahmen umgesetzt werden. Mögliche Maßnahmen sind z.B.",
+            "Starting at heat warning level 2 (from 30 °C), a response plan and emergency measures must be implemented. Possible measures include:"
+        )
+    }
+    var heatProgramSection: InfoSection {
+        InfoSection(
+            title: t("Maßnahmenprogramm (STOP-Prinzip)", "Response plan (STOP principle)"),
+            groups: [
+                InfoGroup(
+                    title: t("Technische Maßnahmen", "Technical measures"),
+                    bullets: bulletLines(
+                        """
+                        Beschattung von Arbeits- und Pausenplätzen mit Sonnenschirmen, Pavillons etc.
+                        Technische Kühlmaßnahmen wie z.B. Ventilatoren
+                        Reduzierung körperlich anstrengender Arbeiten z. B. durch Hebehilfen
+                        """,
+                        """
+                        Shade work and rest areas with parasols, pavilions, etc.
+                        Technical cooling measures such as fans
+                        Reduce physically strenuous work, e.g. by using lifting aids
+                        """
+                    )
+                ),
+                InfoGroup(
+                    title: t("Organisatorische Maßnahmen", "Organizational measures"),
+                    bullets: bulletLines(
+                        """
+                        Verlagerung von schweren Arbeiten in kühlere Tageszeiten
+                        Pausen zum Abkühlen
+                        Schwere Tätigkeiten im Schatten/Kühlen verrichten
+                        """,
+                        """
+                        Shift heavy work to cooler times of day
+                        Take breaks to cool down
+                        Carry out heavy tasks in shade or cool areas
+                        """
+                    )
+                ),
+                InfoGroup(
+                    title: t("Persönliche Schutzmaßnahmen", "Personal protective measures"),
+                    bullets: bulletLines(
+                        """
+                        Ausreichend Trinkwasser bereitstellen
+                        Leichte Arbeitskleidung mit UV-Schutz und Sonnenschutzmittel (LSF von 50 empfohlen), UV-Schutzbrille, Kühltücher
+                        Je nach Einsatzgebiet: Schutzhelm mit Nackenschutz
+                        """,
+                        """
+                        Provide sufficient drinking water
+                        Light work clothing with UV protection and sunscreen (SPF 50 recommended), UV-protective glasses, cooling towels
+                        Depending on the work area: safety helmet with neck protection
+                        """
+                    )
+                )
+            ]
+        )
+    }
+    var heatEmergencySection: InfoSection {
+        InfoSection(
+            title: t("Notfallmaßnahmen", "Emergency measures"),
+            groups: [
+                InfoGroup(
+                    title: t("Hitzebedingte Symptome können sein", "Heat-related symptoms can include"),
+                    bullets: bulletLines(
+                        """
+                        Kopfschmerzen, Schwindel, Übelkeit
+                        Schwäche, Krämpfe, Verwirrtheit
+                        Heiße, trockene oder stark schwitzende Haut
+                        Bewusstseinsstörungen
+                        """,
+                        """
+                        Headaches, dizziness, nausea
+                        Weakness, cramps, confusion
+                        Hot, dry skin or very sweaty skin
+                        Impaired consciousness
+                        """
+                    )
+                ),
+                InfoGroup(
+                    title: t("Mögliche Notfallmaßnahmen", "Possible emergency measures"),
+                    bullets: [
+                        InfoBullet(
+                            text: t(
+                                "Arbeit unterbrechen und Betroffene in den Schatten/ins Kühle bringen",
+                                "Stop work and move the affected person to shade or a cool place"
+                            ),
+                            cta: nil
+                        ),
+                        InfoBullet(
+                            text: t(
+                                "Kühlung des Körpers z.B. durch feuchte Tücher oder Ventilation",
+                                "Cool the body, e.g. with damp cloths or ventilation"
+                            ),
+                            cta: nil
+                        ),
+                        InfoBullet(
+                            text: t("Kleidung lockern", "Loosen clothing"),
+                            cta: nil
+                        ),
+                        InfoBullet(
+                            text: t(
+                                "Langsam trinken lassen (Wasser, Tee, Elektrolytlösungen)",
+                                "Let the person drink slowly (water, tea, electrolyte solutions)"
+                            ),
+                            cta: nil
+                        ),
+                        InfoBullet(
+                            text: t(
+                                "Bei Bewusstlosigkeit in stabile Seitenlage bringen",
+                                "If unconscious, place the person in the recovery position"
+                            ),
+                            cta: nil
+                        ),
+                        InfoBullet(
+                            text: t(
+                                "Notruf (144) wählen, wenn Zustand nicht bald besser oder Anzeichen von Bewusstlosigkeit",
+                                "Call emergency services (144) if the condition does not improve soon or there are signs of loss of consciousness"
+                            ),
+                            cta: nil
+                        ),
+                        InfoBullet(
+                            text: t(
+                                "Bis zum Eintreffen der Rettung Bewusstsein und Atmung kontrollieren",
+                                "Monitor consciousness and breathing until emergency services arrive"
+                            ),
+                            cta: nil
+                        ),
+                        InfoBullet(
+                            text: t(
+                                "Ist keine normale Atmung vorhanden, sofort Wiederbelebungsmaßnahmen einleiten – Hilfe holen!",
+                                "If there is no normal breathing, start CPR immediately and get help"
+                            ),
+                            cta: emergencyCallCTA
+                        )
+                    ]
+                )
+            ]
+        )
+    }
+    var optionalChecklistCta: InfoCTA? {
+        guard let urlString = Self.infoChecklistURL, let url = URL(string: urlString) else {
+            return nil
+        }
+        return InfoCTA(
+            label: t(
+                "Hier geht’s zur Hitzeschutzcheckliste für Betriebe",
+                "Heat protection checklist for businesses"
+            ),
+            url: url
+        )
+    }
+    var uvSection: InfoSection {
+        InfoSection(
+            title: infoScreenUvMeasuresTitle,
+            groups: [
+                InfoGroup(
+                    title: infoScreenUvLevel5Title,
+                    bullets: [
+                        InfoBullet(text: uvInfoDetail5Plus, cta: nil),
+                        InfoBullet(text: uvInfoMeasures5Plus, cta: nil)
+                    ]
+                )
+            ]
+        )
+    }
+    var emergencyCallCTA: InfoCTA? {
+        guard let url = URL(string: "tel://144") else {
+            return nil
+        }
+        return InfoCTA(
+            label: t("Jetzt 144 anrufen", "Call 144 now"),
+            url: url
+        )
+    }
     var appearanceSection: String { t("Erscheinungsbild", "Appearance") }
     var aboutSection: String { t("Info & Rechtliches", "Info & Legal") }
     var dataSourceLine: String { t("Datenquelle: GeoSphere Austria", "Data source: GeoSphere Austria") }
@@ -1102,6 +1233,60 @@ struct Copybook {
             "Wenn gesetzt, wird diese URL statt des GeoSphere-Servers verwendet.",
             "If set, this URL is used instead of the GeoSphere server."
         )
+    }
+    var machineTranslationDisclaimer: String {
+        switch language {
+        case .de:
+            return "Texte in anderen Sprachen werden maschinell aus dem Deutschen übersetzt. Für Vollständigkeit und Korrektheit dieser Übersetzungen kann keine Gewähr übernommen werden."
+        case .bg:
+            return "Текстовете на други езици са машинно преведени от немски. Не се дава гаранция за пълнотата или точността на тези преводи."
+        case .da:
+            return "Tekster på andre sprog er maskinoversat fra tysk. Der gives ingen garanti for disse oversættelsers fuldstændighed eller korrekthed."
+        case .en:
+            return "Texts in other languages are machine-translated from German. No guarantee is given for the completeness or accuracy of these translations."
+        case .et:
+            return "Teistes keeltes olevad tekstid on saksa keelest masintõlgitud. Nende tõlgete täielikkuse ega õigsuse eest ei anta garantiid."
+        case .fi:
+            return "Muiden kielten tekstit on konekäännetty saksasta. Näiden käännösten täydellisyydestä tai oikeellisuudesta ei anneta takuuta."
+        case .fr:
+            return "Les textes dans les autres langues sont traduits automatiquement à partir de l’allemand. Aucune garantie n’est donnée quant à l’exhaustivité ou à l’exactitude de ces traductions."
+        case .el:
+            return "Τα κείμενα σε άλλες γλώσσες έχουν μεταφραστεί αυτόματα από τα γερμανικά. Δεν παρέχεται καμία εγγύηση για την πληρότητα ή την ακρίβεια αυτών των μεταφράσεων."
+        case .ga:
+            return "Tá na téacsanna i dteangacha eile aistrithe go huathoibríoch ón nGearmáinis. Ní thugtar aon ráthaíocht maidir le hiomláine ná cruinneas na n-aistriúchán seo."
+        case .it:
+            return "I testi nelle altre lingue sono tradotti automaticamente dal tedesco. Non viene fornita alcuna garanzia circa la completezza o la correttezza di queste traduzioni."
+        case .hr:
+            return "Tekstovi na drugim jezicima strojno su prevedeni s njemačkog. Ne daje se nikakvo jamstvo za potpunost ili točnost tih prijevoda."
+        case .lv:
+            return "Teksti citās valodās ir mašīntulkoti no vācu valodas. Netiek sniegta nekāda garantija par šo tulkojumu pilnīgumu vai pareizību."
+        case .lt:
+            return "Tekstai kitomis kalbomis yra automatiškai išversti iš vokiečių kalbos. Nėra teikiama jokia garantija dėl šių vertimų išsamumo ar tikslumo."
+        case .mt:
+            return "It-testi b'lingwi oħra huma tradotti b'mod awtomatiku mill-Ġermaniż. Ma tingħata ebda garanzija dwar il-kompletezza jew il-korrettezza ta' dawn it-traduzzjonijiet."
+        case .nl:
+            return "Teksten in andere talen zijn machinaal vertaald vanuit het Duits. Voor de volledigheid of juistheid van deze vertalingen wordt geen garantie gegeven."
+        case .pl:
+            return "Teksty w innych językach są tłumaczone maszynowo z języka niemieckiego. Nie udziela się żadnej gwarancji co do kompletności ani poprawności tych tłumaczeń."
+        case .pt:
+            return "Os textos noutros idiomas são traduzidos automaticamente do alemão. Não é dada qualquer garantia quanto à integralidade ou correção dessas traduções."
+        case .ro:
+            return "Textele în alte limbi sunt traduse automat din germană. Nu se oferă nicio garanție privind caracterul complet sau corectitudinea acestor traduceri."
+        case .sv:
+            return "Texter på andra språk är maskinöversatta från tyska. Ingen garanti lämnas för att dessa översättningar är fullständiga eller korrekta."
+        case .sk:
+            return "Texty v iných jazykoch sú strojovo preložené z nemčiny. Za úplnosť ani správnosť týchto prekladov sa neposkytuje žiadna záruka."
+        case .sl:
+            return "Besedila v drugih jezikih so strojno prevedena iz nemščine. Za popolnost ali pravilnost teh prevodov ni mogoče jamčiti."
+        case .es:
+            return "Los textos en otros idiomas están traducidos automáticamente del alemán. No se ofrece ninguna garantía sobre la integridad o la exactitud de estas traducciones."
+        case .cs:
+            return "Texty v jiných jazycích jsou strojově přeloženy z němčiny. Za úplnost ani správnost těchto překladů se neposkytuje žádná záruka."
+        case .hu:
+            return "A más nyelveken megjelenő szövegek németből gépi fordítással készültek. E fordítások teljességéért vagy helyességéért nem vállalunk garanciát."
+        case .tr:
+            return "Diğer dillerdeki metinler Almancadan makine çevirisiyle çevrilmiştir. Bu çevirilerin eksiksizliği veya doğruluğu konusunda herhangi bir garanti verilmez."
+        }
     }
     var mockModeActiveBadge: String { t("Mock aktiv", "Mock active") }
     var mockModeSessionHint: String {
@@ -1127,34 +1312,12 @@ struct Copybook {
     var onboardingSkipButton: String { t("Später / Überspringen", "Later / Skip") }
     var todayTitle: String { t("Heute", "Today") }
     var heatWarningLevelLabel: String { t("Hitzewarnstufe", "Heat warning level") }
-    var uvWarningBadge67: String { t("UV-Warnung 6-7", "UV Warning 6-7") }
-    var uvWarningBadge810: String { t("UV-Warnung 8-10", "UV Warning 8-10") }
-    var uvWarningBadge11Plus: String { t("UV-Warnung >= 11", "UV Warning >= 11") }
-    var uvWarningDetail67: String { t("Direkte Sonne zwischen 11:00 und 15:00 Uhr auf max. 2 Stunden begrenzen, sonst Schatten oder Indoor.", "Limit direct sun exposure between 11:00 and 15:00 to max. 2 hours, otherwise shade or indoors.") }
-    var uvWarningDetail67OutsideWindow: String { t("Erhöhte UV-Belastung heute: Schutzkleidung, Kopfbedeckung, Sonnenbrille und Sonnencreme konsequent verwenden.", "Increased UV exposure today: consistently use protective clothing, head covering, sunglasses, and sunscreen.") }
-    var uvWarningDetail810: String { t("Direkte Sonne zwischen 11:00 und 15:00 Uhr auf max. 1 Stunde begrenzen, sonst Schatten oder Indoor.", "Limit direct sun exposure between 11:00 and 15:00 to max. 1 hour, otherwise shade or indoors.") }
-    var uvWarningDetail810OutsideWindow: String { t("Hohe UV-Belastung heute: Schutzmaßnahmen konsequent umsetzen und Arbeiten bevorzugt in den Schatten verlagern.", "High UV exposure today: apply protective measures consistently and prioritize work in shade.") }
-    var uvWarningDetail11Plus: String { t("UV-Index >= 11 wurde im österreichischen Flachland bisher nicht gemessen. Falls gemeldet: direkte Sonne vermeiden, nur mit maximalem Schutz arbeiten.", "UV index >= 11 has not been measured in Austrian lowland regions so far. If reported: avoid direct sun and work only with maximum protection.") }
+    var uvWarningBadge5Plus: String { t("UV >= 5", "UV >= 5") }
+    var uvInfoDetail5Plus: String { t("Ab UV-Index 5 steigt die Belastung deutlich. Schutzkleidung, Kopfbedeckung, Sonnenbrille und Sonnencreme konsequent verwenden.", "At UV index 5 and above, exposure increases significantly. Consistently use protective clothing, head covering, sunglasses, and sunscreen.") }
+    var uvInfoMeasures5Plus: String { t("Direkte Sonne und belastende Arbeiten möglichst in den Schatten verlagern und Aufenthalte in voller Sonne begrenzen.", "Move direct sun exposure and strenuous work into shade whenever possible and limit time spent in full sun.") }
 
     func weekdayShort(_ weekday: Int) -> String {
-        switch weekday {
-        case 1:
-            return t("SO", "SUN")
-        case 2:
-            return t("MO", "MON")
-        case 3:
-            return t("DI", "TUE")
-        case 4:
-            return t("MI", "WED")
-        case 5:
-            return t("DO", "THU")
-        case 6:
-            return t("FR", "FRI")
-        case 7:
-            return t("SA", "SAT")
-        default:
-            return "-"
-        }
+        localizedWeekdayShort(weekday)
     }
 
     func languageMenuShort(_ language: AppLanguage) -> String {
@@ -1215,60 +1378,7 @@ struct Copybook {
     }
 
     func languageOption(_ language: AppLanguage) -> String {
-        switch language {
-        case .system:
-            return t("Systemsprache", "System language")
-        case .bg:
-            return t("Bulgarisch", "Bulgarian")
-        case .da:
-            return t("Dänisch", "Danish")
-        case .de:
-            return t("Deutsch", "German")
-        case .en:
-            return t("Englisch", "English")
-        case .et:
-            return t("Estnisch", "Estonian")
-        case .fi:
-            return t("Finnisch", "Finnish")
-        case .fr:
-            return t("Französisch", "French")
-        case .el:
-            return t("Griechisch", "Greek")
-        case .ga:
-            return t("Irisch", "Irish")
-        case .it:
-            return t("Italienisch", "Italian")
-        case .hr:
-            return t("Kroatisch", "Croatian")
-        case .lv:
-            return t("Lettisch", "Latvian")
-        case .lt:
-            return t("Litauisch", "Lithuanian")
-        case .mt:
-            return t("Maltesisch", "Maltese")
-        case .nl:
-            return t("Niederländisch", "Dutch")
-        case .pl:
-            return t("Polnisch", "Polish")
-        case .pt:
-            return t("Portugiesisch", "Portuguese")
-        case .ro:
-            return t("Rumänisch", "Romanian")
-        case .sv:
-            return t("Schwedisch", "Swedish")
-        case .sk:
-            return t("Slowakisch", "Slovak")
-        case .sl:
-            return t("Slowenisch", "Slovenian")
-        case .es:
-            return t("Spanisch", "Spanish")
-        case .cs:
-            return t("Tschechisch", "Czech")
-        case .hu:
-            return t("Ungarisch", "Hungarian")
-        case .tr:
-            return t("Türkisch", "Turkish")
-        }
+        localizedLanguageName(for: language)
     }
 
     func severityName(_ severity: HazardSeverity) -> String {
@@ -1474,6 +1584,8 @@ struct Copybook {
             "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.": "Çalışma alanlarınızdaki tehlikeli sıcaklık seviyeleri hakkında sizi zamanında uyarabilmemiz için push bildirimlerine izin vermeniz gerekir. Lütfen bir sonraki adımda izin verin.",
         ]
     ]
+
+    private static let infoChecklistURL: String? = nil
 }
 
 private extension HazardSeverity {

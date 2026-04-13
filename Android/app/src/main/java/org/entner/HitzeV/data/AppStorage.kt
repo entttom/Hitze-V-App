@@ -46,6 +46,14 @@ class AppStorage(context: Context) {
         preferences[Keys.hasCompletedOnboarding] ?: false
     }
 
+    val isPushNotificationsEnabled: Flow<Boolean> = dataStore.safeData.map { preferences ->
+        preferences[Keys.isPushNotificationsEnabled] ?: true
+    }
+
+    val disabledPushWorksiteIds: Flow<Set<String>> = dataStore.safeData.map { preferences ->
+        preferences[Keys.disabledPushWorksiteIds] ?: emptySet()
+    }
+
     val subscribedMunicipalityIds: Flow<Set<String>> = dataStore.safeData.map { preferences ->
         preferences[Keys.subscribedMunicipalityIds] ?: emptySet()
     }
@@ -82,6 +90,18 @@ class AppStorage(context: Context) {
         }
     }
 
+    suspend fun savePushNotificationsEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[Keys.isPushNotificationsEnabled] = enabled
+        }
+    }
+
+    suspend fun saveDisabledPushWorksiteIds(ids: Set<String>) {
+        dataStore.edit { preferences ->
+            preferences[Keys.disabledPushWorksiteIds] = ids
+        }
+    }
+
     suspend fun saveSubscribedMunicipalityIds(ids: Set<String>) {
         dataStore.edit { preferences ->
             preferences[Keys.subscribedMunicipalityIds] = ids
@@ -111,6 +131,8 @@ class AppStorage(context: Context) {
         val language = stringPreferencesKey("dashboard.language")
         val theme = stringPreferencesKey("app.theme")
         val hasCompletedOnboarding = booleanPreferencesKey("hasCompletedOnboarding")
+        val isPushNotificationsEnabled = booleanPreferencesKey("push.notifications.enabled")
+        val disabledPushWorksiteIds = stringSetPreferencesKey("push.notifications.disabledWorksiteIds")
         val subscribedMunicipalityIds = stringSetPreferencesKey("subscription_manager.subscribedMunicipalityIDs")
         val customGeoSphereUrl = stringPreferencesKey("network.customGeoSphereUrl")
         val lastSubscribedLanguageCode = stringPreferencesKey("subscription_manager.lastSubscribedLanguageCode")
