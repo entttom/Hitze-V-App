@@ -29,12 +29,24 @@ struct ContentView: View {
         snapshotsInDisplayOrder.compactMap(\.uvIndex).max()
     }
 
+    private var uvAffectedWorksitesCount: Int {
+        snapshotsInDisplayOrder.filter { ($0.uvIndex ?? 0) >= 5 }.count
+    }
+
     private var maxApparentTemperature: Double? {
         snapshotsInDisplayOrder.compactMap(\.apparentTemperature).max()
     }
 
-    private var activeWarningCount: Int {
-        snapshotsInDisplayOrder.filter { $0.severity != .none }.count
+    private var activeHeatWarningCount: Int {
+        snapshotsInDisplayOrder.filter { $0.severity.isHeatWarning }.count
+    }
+
+    private var isUvOnlyElevated: Bool {
+        activeHeatWarningCount == 0 && uvAffectedWorksitesCount > 0
+    }
+
+    private var dashboardRiskSeverity: HazardSeverity {
+        isUvOnlyElevated ? .heatYellow : highestSeverity
     }
     
     private var currentYear: Int {
@@ -131,7 +143,11 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity)
 
-            Text(copy.severityAction(highestSeverity))
+            Text(copy.dashboardActionText(
+                isUvOnlyElevated: isUvOnlyElevated,
+                severity: highestSeverity,
+                uvAffectedWorksitesCount: uvAffectedWorksitesCount
+            ))
                 .font(.system(.footnote, design: .rounded).weight(.semibold))
                 .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
@@ -149,7 +165,7 @@ struct ContentView: View {
                 HeroMetricBubble(
                     icon: "exclamationmark.triangle.fill",
                     label: copy.warningsLabel,
-                    value: "\(activeWarningCount)",
+                    value: "\(activeHeatWarningCount)",
                     tint: Color(red: 0.99, green: 0.64, blue: 0.28)
                 )
                 .frame(maxWidth: .infinity)
@@ -192,16 +208,20 @@ struct ContentView: View {
             HStack(spacing: 10) {
                 GlanceTile(
                     title: copy.currentRiskTitle,
-                    value: copy.severityHeadline(highestSeverity),
-                    icon: highestSeverity.symbol,
-                    tint: highestSeverity.tint
+                    value: copy.dashboardRiskHeadline(
+                        isUvOnlyElevated: isUvOnlyElevated,
+                        severity: highestSeverity
+                    ),
+                    icon: dashboardRiskSeverity.symbol,
+                    tint: dashboardRiskSeverity.tint
                 )
 
                 GlanceTile(
                     title: copy.uvPeakTitle,
                     value: uvText(highestUV),
                     icon: "sun.max.fill",
-                    tint: Color(red: 0.99, green: 0.66, blue: 0.25)
+                    tint: Color(red: 0.99, green: 0.66, blue: 0.25),
+                    backgroundTint: uvAffectedWorksitesCount > 0 ? Color(red: 0.98, green: 0.68, blue: 0.24) : nil
                 )
 
                 GlanceTile(
@@ -692,6 +712,21 @@ private struct GlanceTile: View {
     let value: String
     let icon: String
     let tint: Color
+    let backgroundTint: Color?
+
+    init(
+        title: String,
+        value: String,
+        icon: String,
+        tint: Color,
+        backgroundTint: Color? = nil
+    ) {
+        self.title = title
+        self.value = value
+        self.icon = icon
+        self.tint = tint
+        self.backgroundTint = backgroundTint
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -712,6 +747,19 @@ private struct GlanceTile: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            if let backgroundTint {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(backgroundTint.opacity(0.16))
+            }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(
+                    (backgroundTint ?? Color.black).opacity(backgroundTint == nil ? 0.05 : 0.16),
+                    lineWidth: 1
+                )
+        }
     }
 }
 
@@ -1013,7 +1061,7 @@ struct Copybook {
     var uvPeakTitle: String { t("Höchster UV", "Peak UV") }
     var apparentTitle: String { t("Gefühlte Temp", "Feels Like") }
     var workplaceLabel: String { t("Arbeitsplätze", "Workplaces") }
-    var warningsLabel: String { t("Warnungen", "Warnings") }
+    var warningsLabel: String { t("Hitzewarnungen", "Heat warnings") }
     var topicsLabel: String { t("Topics", "Topics") }
     var addWorkplaceTitle: String { t("Neuen Arbeitsplatz anlegen", "Create New Workplace") }
     var namePlaceholder: String { t("Bezeichnung (optional)", "Label (optional)") }
@@ -1421,6 +1469,33 @@ struct Copybook {
             return t("Alles ruhig. Standardmaßnahmen reichen aus.", "All clear. Standard precautions are sufficient.")
         }
     }
+
+    func dashboardRiskHeadline(isUvOnlyElevated: Bool, severity: HazardSeverity) -> String {
+        isUvOnlyElevated ? severityHeadline(.heatYellow) : severityHeadline(severity)
+    }
+
+    func dashboardActionText(
+        isUvOnlyElevated: Bool,
+        severity: HazardSeverity,
+        uvAffectedWorksitesCount: Int
+    ) -> String {
+        if isUvOnlyElevated {
+            return uvOnlyAction(worksitesCount: uvAffectedWorksitesCount)
+        }
+        return severityAction(severity)
+    }
+
+    func uvOnlyAction(worksitesCount: Int) -> String {
+        let format = worksitesCount == 1
+            ? t("%d Arbeitsplatz über UV-Index 5. UV-Schutzmaßnahmen umsetzen.", "%d workplace above UV index 5. Implement UV protection measures.")
+            : t("%d Arbeitsplätze über UV-Index 5. UV-Schutzmaßnahmen umsetzen.", "%d workplaces above UV index 5. Implement UV protection measures.")
+        let locale = Locale(identifier: language.localeIdentifier)
+        let message = String(format: format, locale: locale, arguments: [worksitesCount])
+        guard let lineBreakRange = message.range(of: ". ") else {
+            return message
+        }
+        return message.replacingCharacters(in: lineBreakRange, with: ".\n")
+    }
     
     func copyrightLine(year: Int) -> String {
         "© \(year) SFK Robert Lembacher und Dr. Thomas Entner"
@@ -1589,6 +1664,15 @@ struct Copybook {
 }
 
 private extension HazardSeverity {
+    var isHeatWarning: Bool {
+        switch self {
+        case .heatYellow, .heatOrange, .heatRed:
+            return true
+        case .none, .coldYellow, .coldOrange, .coldRed:
+            return false
+        }
+    }
+
     var tint: Color {
         switch self {
         case .none:

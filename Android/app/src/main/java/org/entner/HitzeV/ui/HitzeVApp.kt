@@ -155,6 +155,8 @@ private val warningTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPatter
 private val viennaZoneId: ZoneId = ZoneId.of("Europe/Vienna")
 
 private fun showsUvWarningBadge(uvIndex: Double?): Boolean = uvIndex?.let { it >= 5.0 } == true
+private fun HazardSeverity.isHeatWarning(): Boolean =
+    this == HazardSeverity.HEAT_YELLOW || this == HazardSeverity.HEAT_ORANGE || this == HazardSeverity.HEAT_RED
 
 @Composable
 fun HitzeVApp(viewModel: DashboardViewModel = viewModel()) {
@@ -284,8 +286,11 @@ private fun DashboardScreen(
     val snapshots = uiState.worksites.mapNotNull { uiState.snapshots[it.id] }
     val highestSeverity = snapshots.maxByOrNull { it.severity.level }?.severity ?: HazardSeverity.NONE
     val highestUv = snapshots.maxOfOrNull { it.uvIndex ?: Double.MIN_VALUE }?.takeUnless { it == Double.MIN_VALUE }
+    val uvAffectedWorksitesCount = snapshots.count { showsUvWarningBadge(it.uvIndex) }
     val maxApparentTemperature = snapshots.maxOfOrNull { it.apparentTemperature ?: Double.MIN_VALUE }?.takeUnless { it == Double.MIN_VALUE }
-    val activeWarningCount = snapshots.count { it.severity != HazardSeverity.NONE }
+    val activeHeatWarningCount = snapshots.count { it.severity.isHeatWarning() }
+    val isUvOnlyElevated = activeHeatWarningCount == 0 && uvAffectedWorksitesCount > 0
+    val dashboardRiskSeverity = if (isUvOnlyElevated) HazardSeverity.HEAT_YELLOW else highestSeverity
     val currentYear = Calendar.getInstance().get(Calendar.YEAR)
 
     LaunchedEffect(Unit) {
@@ -335,16 +340,25 @@ private fun DashboardScreen(
                         HeroCard(
                             copy = copy,
                             worksitesCount = uiState.worksites.size,
-                            warningCount = activeWarningCount,
-                            highestSeverity = highestSeverity
+                            warningCount = activeHeatWarningCount,
+                            actionText = copy.dashboardActionText(
+                                isUvOnlyElevated = isUvOnlyElevated,
+                                severity = highestSeverity,
+                                uvAffectedWorksitesCount = uvAffectedWorksitesCount
+                            )
                         )
                     }
                     item {
                         GlanceCard(
                             copy = copy,
-                            highestSeverity = highestSeverity,
+                            currentRiskSeverity = dashboardRiskSeverity,
+                            currentRiskValue = copy.dashboardRiskHeadline(
+                                isUvOnlyElevated = isUvOnlyElevated,
+                                severity = highestSeverity
+                            ),
                             highestUv = highestUv,
-                            maxApparentTemperature = maxApparentTemperature
+                            maxApparentTemperature = maxApparentTemperature,
+                            highlightUv = uvAffectedWorksitesCount > 0
                         )
                     }
                     item {
@@ -369,7 +383,7 @@ private fun HeroCard(
     copy: Copybook,
     worksitesCount: Int,
     warningCount: Int,
-    highestSeverity: HazardSeverity
+    actionText: String
 ) {
     Box(
         modifier = Modifier
@@ -413,7 +427,7 @@ private fun HeroCard(
             )
 
             Text(
-                text = copy.severityAction(highestSeverity),
+                text = actionText,
                 style = MaterialTheme.typography.bodyMedium,
                 color = ColorWhite,
                 textAlign = TextAlign.Center,
@@ -474,9 +488,11 @@ private fun HeroMetricBubble(
 @Composable
 private fun GlanceCard(
     copy: Copybook,
-    highestSeverity: HazardSeverity,
+    currentRiskSeverity: HazardSeverity,
+    currentRiskValue: String,
     highestUv: Double?,
-    maxApparentTemperature: Double?
+    maxApparentTemperature: Double?,
+    highlightUv: Boolean
 ) {
     FrostedCard {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -489,16 +505,21 @@ private fun GlanceCard(
                 GlanceTile(
                     modifier = Modifier.weight(1f),
                     title = copy.currentRiskTitle,
-                    value = copy.severityHeadline(highestSeverity),
-                    icon = severityIcon(highestSeverity),
-                    tint = severityColor(highestSeverity)
+                    value = currentRiskValue,
+                    icon = severityIcon(currentRiskSeverity),
+                    tint = severityColor(currentRiskSeverity)
                 )
                 GlanceTile(
                     modifier = Modifier.weight(1f),
                     title = copy.uvPeakTitle,
                     value = copy.formatUv(highestUv),
                     icon = Icons.Rounded.WarningAmber,
-                    tint = GoldenSun
+                    tint = GoldenSun,
+                    containerColor = if (highlightUv) {
+                        GoldenSun.copy(alpha = 0.18f)
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.66f)
+                    }
                 )
                 GlanceTile(
                     modifier = Modifier.weight(1f),
@@ -518,12 +539,13 @@ private fun GlanceTile(
     title: String,
     value: String,
     icon: ImageVector,
-    tint: Color
+    tint: Color,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.66f)
 ) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.66f)
+        color = containerColor
     ) {
         Column(
             modifier = Modifier.padding(12.dp),

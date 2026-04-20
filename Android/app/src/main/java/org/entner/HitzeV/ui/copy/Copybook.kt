@@ -59,7 +59,7 @@ class Copybook(private val language: ResolvedLanguage) {
     val uvPeakTitle: String = t("Höchster UV", "Peak UV")
     val apparentTitle: String = t("Gefühlte Temp.", "Feels Like")
     val workplaceLabel: String = t("Arbeitsplätze", "Workplaces")
-    val warningsLabel: String = t("Warnungen", "Warnings")
+    val warningsLabel: String = t("Hitzewarnungen", "Heat warnings")
     val addWorkplaceTitle: String = t("Neuen Arbeitsplatz anlegen", "Create New Workplace")
     val namePlaceholder: String = t("Bezeichnung (optional)", "Label (optional)")
     val addressPlaceholder: String = t("Adresse oder Ort suchen", "Search address or place")
@@ -426,6 +426,43 @@ class Copybook(private val language: ResolvedLanguage) {
         HazardSeverity.HEAT_YELLOW -> t("Pausen und Schatten erhöhen.", "Increase breaks and shade usage.")
         HazardSeverity.HEAT_ORANGE -> t("Arbeitszeiten anpassen und Teams aktiv schützen.", "Adjust schedules and actively protect teams.")
         HazardSeverity.HEAT_RED -> t("Sofort Hitze-V Schutzmaßnahmen umsetzen.", "Apply Heat-V protective measures immediately.")
+    }
+
+    fun dashboardRiskHeadline(isUvOnlyElevated: Boolean, severity: HazardSeverity): String =
+        if (isUvOnlyElevated) severityHeadline(HazardSeverity.HEAT_YELLOW) else severityHeadline(severity)
+
+    fun dashboardActionText(
+        isUvOnlyElevated: Boolean,
+        severity: HazardSeverity,
+        uvAffectedWorksitesCount: Int
+    ): String = if (isUvOnlyElevated) {
+        uvOnlyAction(uvAffectedWorksitesCount)
+    } else {
+        severityAction(severity)
+    }
+
+    fun uvOnlyAction(worksitesCount: Int): String {
+        val format = if (worksitesCount == 1) {
+            t(
+                "%d Arbeitsplatz über UV-Index 5. UV-Schutzmaßnahmen umsetzen.",
+                "%d workplace above UV index 5. Implement UV protection measures."
+            )
+        } else {
+            t(
+                "%d Arbeitsplätze über UV-Index 5. UV-Schutzmaßnahmen umsetzen.",
+                "%d workplaces above UV index 5. Implement UV protection measures."
+            )
+        }
+        val message = String.format(uiLocale, format, worksitesCount)
+        val sentenceBreakIndex = message.indexOf(". ")
+        if (sentenceBreakIndex == -1) {
+            return message
+        }
+        return buildString(message.length + 1) {
+            append(message, 0, sentenceBreakIndex + 1)
+            append('\n')
+            append(message, sentenceBreakIndex + 2, message.length)
+        }
     }
 
     companion object {
