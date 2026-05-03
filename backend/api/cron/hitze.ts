@@ -5,6 +5,7 @@ import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getMessaging, type Messaging } from "firebase-admin/messaging";
 import { createClient, type RedisClientType } from "redis";
 import * as XLSX from "xlsx";
+import { isEnvFlagEnabled } from "./env";
 import {
   DEFAULT_PUSH_LANGUAGE,
   SUPPORTED_PUSH_LANGUAGES,
@@ -21,7 +22,6 @@ const REDIS_SEND_META_KEY = "hitze:v1:send_meta";
 const REDIS_CRON_LOCK_KEY = "hitze:v1:cron_lock";
 const SEND_META_RETENTION_DAYS = 7;
 const WARNING_TYPE_HEAT = 6;
-const WARNING_TYPE_COLD = 7;
 const MUNICIPALITY_LIST_FILE = "gemliste_knz.xls";
 const DEFAULT_MIN_WARNING_LEVEL = 2;
 const GEO_FETCH_TIMEOUT_MS = 10_000;
@@ -36,7 +36,7 @@ let redisClient: RedisClientType | null = null;
 let municipalityNameById: Map<string, string> | null = null;
 let testMunicipalityOptions: TestMunicipalityOption[] | null = null;
 
-type WarningKind = "heat" | "cold";
+type WarningKind = "heat";
 
 interface NormalizedWarning {
   id: string;
@@ -232,16 +232,7 @@ function getWarningTimeWindow(properties: Record<string, unknown>): { start: str
 }
 
 function mapWarningTypeToKind(value: unknown): WarningKind | null {
-  const numericType = asNumber(value);
-  if (numericType === WARNING_TYPE_HEAT) {
-    return "heat";
-  }
-
-  if (numericType === WARNING_TYPE_COLD) {
-    return "cold";
-  }
-
-  return null;
+  return asNumber(value) === WARNING_TYPE_HEAT ? "heat" : null;
 }
 
 function getWarningKind(properties: Record<string, unknown>): WarningKind | null {
@@ -259,10 +250,6 @@ function getWarningKind(properties: Record<string, unknown>): WarningKind | null
   const textualType = asString(directType)?.toLowerCase();
   if (textualType && (textualType.includes("hitze") || textualType.includes("heat"))) {
     return "heat";
-  }
-
-  if (textualType && (textualType.includes("kälte") || textualType.includes("kaelte") || textualType.includes("cold"))) {
-    return "cold";
   }
 
   const rawInfo = getRawInfo(properties);
@@ -335,11 +322,6 @@ function normalizeWarning(
 
   const kind = getWarningKind(properties);
   if (!kind) {
-    return null;
-  }
-
-  // Product decision: ignore cold warnings completely.
-  if (kind === "cold") {
     return null;
   }
 
@@ -721,14 +703,6 @@ function isPushQuietHoursVienna(epochMs: number = Date.now()): boolean {
 
 function pushQuietHoursWindowLabel(): string {
   return `${String(PUSH_QUIET_HOURS_START).padStart(2, "0")}:00-${String(PUSH_QUIET_HOURS_END).padStart(2, "0")}:00 Europe/Vienna`;
-}
-
-function isEnvFlagEnabled(value: string | undefined): boolean {
-  if (!value) {
-    return false;
-  }
-
-  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 }
 
 function useStaticGeoSphereResponse(): boolean {
@@ -1208,19 +1182,6 @@ function pushContentForWarning(
     ? buildTimeWindowChangeText(previousTimeWindow, timeWindow, languageCode)
     : "";
 
-  if (aggregate.kind === "cold") {
-    const bodyBase = localization.buildColdBody(name);
-    return {
-      title: localization.coldWarningTitle,
-      body: timeWindowChangeText
-        ? `${bodyBase} ${timeWindowChangeText}`
-        : timeWindowText
-          ? `${bodyBase} ${timeWindowText}`
-          : bodyBase,
-      collapsePrefix: "kaelte",
-    };
-  }
-
   const bodyBase = localization.buildHeatBody(name, aggregate.maxLevel);
   return {
     title: localization.heatWarningTitle,
@@ -1319,7 +1280,10 @@ export async function sendTestPushNotification(input: TestPushInput): Promise<{
 
 export async function sendTestPushNotifications(
   input: TestBulkPushInput
-): Promise<{ sent: Array<{ municipalityId: string; topic: string; messageId: string }> }> {
+): Promise<{
+  sent: Array<{ municipalityId: string; topic: string; messageId: string }>;
+  failed: Array<{ municipalityId: string; error: string }>;
+}> {
   const municipalityIds = Array.from(
     new Set(
       input.municipalityIds
@@ -1332,24 +1296,40 @@ export async function sendTestPushNotifications(
     throw new AppError(400, "INVALID_INPUT", "At least one municipalityId is required.");
   }
 
+  const concurrency = getFcmSendConcurrency();
+  const results = await allSettledWithConcurrency(
+    municipalityIds,
+    concurrency,
+    (municipalityId) =>
+      sendTestPushNotification({
+        municipalityId,
+        title: input.title,
+        body: input.body,
+        languageCode: input.languageCode,
+      })
+  );
+
   const sent: Array<{ municipalityId: string; topic: string; messageId: string }> = [];
+  const failed: Array<{ municipalityId: string; error: string }> = [];
 
-  for (const municipalityId of municipalityIds) {
-    const result = await sendTestPushNotification({
+  results.forEach((result, index) => {
+    const municipalityId = municipalityIds[index];
+    if (result.status === "fulfilled") {
+      sent.push({
+        municipalityId,
+        topic: result.value.topic,
+        messageId: result.value.messageId,
+      });
+      return;
+    }
+
+    failed.push({
       municipalityId,
-      title: input.title,
-      body: input.body,
-      languageCode: input.languageCode,
+      error: result.reason instanceof Error ? result.reason.message : String(result.reason),
     });
+  });
 
-    sent.push({
-      municipalityId,
-      topic: result.topic,
-      messageId: result.messageId,
-    });
-  }
-
-  return { sent };
+  return { sent, failed };
 }
 
 export async function sendTestPushToToken(
@@ -1467,6 +1447,7 @@ export interface HitzeCronHttpResponse {
 }
 
 export {
+  DEFAULT_PUSH_LANGUAGE,
   listSupportedPushLanguages,
   normalizeSupportedPushLanguage,
   parseSupportedPushLanguage,

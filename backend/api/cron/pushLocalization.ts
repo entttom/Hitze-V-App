@@ -34,9 +34,7 @@ interface PushLocalizationTemplates {
   localeTag: string;
   municipalityLabel: string;
   heatWarningTitle: string;
-  coldWarningTitle: string;
   heatBodyTemplate: string;
-  coldBodyTemplate: string;
   todayRangeTemplate: string;
   validRangeTemplate: string;
   todayFromTemplate: string;
@@ -53,10 +51,8 @@ const EN_LOCALIZATION: PushLocalizationTemplates = {
   localeTag: "en-GB",
   municipalityLabel: "Municipality",
   heatWarningTitle: "Heat Warning",
-  coldWarningTitle: "Cold Warning",
   heatBodyTemplate:
     "Warning level {level} has been reached in {name}. Follow the Heat-V protective measures.",
-  coldBodyTemplate: "Extreme cold in {name}. Wear cold-protection equipment.",
   todayRangeTemplate: "Today from {start} to {end}",
   validRangeTemplate: "Valid: {start} - {end}",
   todayFromTemplate: "Today from {start}",
@@ -75,10 +71,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "bg-BG",
     municipalityLabel: "Obshtina",
     heatWarningTitle: "Preduprezhdenie za zhega",
-    coldWarningTitle: "Preduprezhdenie za stud",
     heatBodyTemplate:
       "V {name} e dostignato nivo na preduprezhdenie {level}. Prilozhete merki za zashtita ot zhega po Hitze-V.",
-    coldBodyTemplate: "Ekstremen stud v {name}. Nosete zashtitna ekipirovka za stud.",
     todayRangeTemplate: "Dnes ot {start} do {end}",
     validRangeTemplate: "Validno: {start} - {end}",
     todayFromTemplate: "Dnes ot {start}",
@@ -95,10 +89,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "da-DK",
     municipalityLabel: "Kommune",
     heatWarningTitle: "Hedevarsel",
-    coldWarningTitle: "Kuldevarsel",
     heatBodyTemplate:
       "Advarselsniveau {level} er naaet i {name}. Foelg varmebeskyttelsesforanstaltningerne i Hitze-V.",
-    coldBodyTemplate: "Ekstrem kulde i {name}. Brug kuldebeskyttelsesudstyr.",
     todayRangeTemplate: "I dag fra {start} til {end}",
     validRangeTemplate: "Gyldig: {start} - {end}",
     todayFromTemplate: "I dag fra {start}",
@@ -115,10 +107,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "de-AT",
     municipalityLabel: "Gemeinde",
     heatWarningTitle: "Hitze-Warnung",
-    coldWarningTitle: "Kaelte-Warnung",
     heatBodyTemplate:
       "In {name} wurde Warnstufe {level} erreicht. Hitzeschutzmassnahmen nach Hitze-V umsetzen.",
-    coldBodyTemplate: "Achtung extreme Kaelte in {name}, Kaelteschutz-Ausruestung tragen.",
     todayRangeTemplate: "Heute von {start} bis {end} Uhr",
     validRangeTemplate: "Gueltig: {start} - {end}",
     todayFromTemplate: "Heute ab {start} Uhr",
@@ -136,10 +126,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "et-EE",
     municipalityLabel: "Omavalitsus",
     heatWarningTitle: "Kuumahoiatus",
-    coldWarningTitle: "Kulmahoiatus",
     heatBodyTemplate:
       "Piirkonnas {name} saavutati hoiatusaste {level}. Rakenda Hitze-V kuumakaitsemeetmeid.",
-    coldBodyTemplate: "Aarmine kulm piirkonnas {name}. Kasuta kulmakaitsevarustust.",
     todayRangeTemplate: "Tana {start}-{end}",
     validRangeTemplate: "Kehtib: {start} - {end}",
     todayFromTemplate: "Tana alates {start}",
@@ -156,10 +144,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "fi-FI",
     municipalityLabel: "Kunta",
     heatWarningTitle: "Hellevaroitus",
-    coldWarningTitle: "Kylmavaroitus",
     heatBodyTemplate:
       "Alueella {name} on saavutettu varoitustaso {level}. Noudata Hitze-V:n helteensuojatoimia.",
-    coldBodyTemplate: "Aarimmaista kylmaa alueella {name}. Kayta kylmansuojavarusteita.",
     todayRangeTemplate: "Tanaan klo {start}-{end}",
     validRangeTemplate: "Voimassa: {start} - {end}",
     todayFromTemplate: "Tanaan klo {start} alkaen",
@@ -176,10 +162,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "fr-FR",
     municipalityLabel: "Commune",
     heatWarningTitle: "Alerte chaleur",
-    coldWarningTitle: "Alerte froid",
     heatBodyTemplate:
       "Le niveau d'alerte {level} est atteint a {name}. Appliquez les mesures de protection chaleur selon Hitze-V.",
-    coldBodyTemplate: "Froid extreme a {name}. Portez un equipement de protection contre le froid.",
     todayRangeTemplate: "Aujourd'hui de {start} a {end}",
     validRangeTemplate: "Valable: {start} - {end}",
     todayFromTemplate: "Aujourd'hui a partir de {start}",
@@ -196,10 +180,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "el-GR",
     municipalityLabel: "Dimos",
     heatWarningTitle: "Proeidopoiisi kausona",
-    coldWarningTitle: "Proeidopoiisi psychous",
     heatBodyTemplate:
       "Sto {name} eftase to epipedo proeidopoiisis {level}. Efarmoste metra prostasias zestis tou Hitze-V.",
-    coldBodyTemplate: "Akrio kryo sto {name}. Xrisimopoiiste exoplismo prostasias apo kryo.",
     todayRangeTemplate: "Simera apo {start} eos {end}",
     validRangeTemplate: "Isxyei: {start} - {end}",
     todayFromTemplate: "Simera apo {start}",
@@ -216,10 +198,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "ga-IE",
     municipalityLabel: "Bardas",
     heatWarningTitle: "Rabhadh teasa",
-    coldWarningTitle: "Rabhadh fuachta",
     heatBodyTemplate:
       "Sroicheadh leibheal rabhaidh {level} i {name}. Lean bearta cosanta teasa Hitze-V.",
-    coldBodyTemplate: "Fuacht mhorear i {name}. Caith trealamh cosanta fuachta.",
     todayRangeTemplate: "Inniu o {start} go {end}",
     validRangeTemplate: "Baili: {start} - {end}",
     todayFromTemplate: "Inniu o {start}",
@@ -236,10 +216,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "it-IT",
     municipalityLabel: "Comune",
     heatWarningTitle: "Allerta caldo",
-    coldWarningTitle: "Allerta freddo",
     heatBodyTemplate:
       "Nel comune di {name} e stato raggiunto il livello di allerta {level}. Applicare le misure di protezione caldo di Hitze-V.",
-    coldBodyTemplate: "Freddo estremo a {name}. Indossare attrezzatura di protezione dal freddo.",
     todayRangeTemplate: "Oggi dalle {start} alle {end}",
     validRangeTemplate: "Valido: {start} - {end}",
     todayFromTemplate: "Oggi dalle {start}",
@@ -256,10 +234,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "hr-HR",
     municipalityLabel: "Opcina",
     heatWarningTitle: "Upozorenje na vrucinu",
-    coldWarningTitle: "Upozorenje na hladnocu",
     heatBodyTemplate:
       "U {name} je dosegnuta razina upozorenja {level}. Primijenite Hitze-V mjere zastite od vrucine.",
-    coldBodyTemplate: "Ekstremna hladnoca u {name}. Nosite opremu za zastitu od hladnoce.",
     todayRangeTemplate: "Danas od {start} do {end}",
     validRangeTemplate: "Vrijedi: {start} - {end}",
     todayFromTemplate: "Danas od {start}",
@@ -276,10 +252,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "lv-LV",
     municipalityLabel: "Pashvaldiba",
     heatWarningTitle: "Karstuma bridinajums",
-    coldWarningTitle: "Aukstuma bridinajums",
     heatBodyTemplate:
       "{name} sasniegts bridinajuma limenis {level}. Ieverojiet Hitze-V karstuma aizsardzibas pasakumus.",
-    coldBodyTemplate: "Ekstrems aukstums vieta {name}. Lietojiet aukstuma aizsardzibas aprikojumu.",
     todayRangeTemplate: "Sodien no {start} lidz {end}",
     validRangeTemplate: "Speka: {start} - {end}",
     todayFromTemplate: "Sodien no {start}",
@@ -296,10 +270,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "lt-LT",
     municipalityLabel: "Savivaldybe",
     heatWarningTitle: "Karscio ispejimas",
-    coldWarningTitle: "Salcio ispejimas",
     heatBodyTemplate:
       "{name} pasiektas ispejimo lygis {level}. Taikykite Hitze-V apsaugos nuo karscio priemones.",
-    coldBodyTemplate: "Ekstremalus saltis vietoveje {name}. Naudokite apsaugos nuo salcio iranga.",
     todayRangeTemplate: "Siandien nuo {start} iki {end}",
     validRangeTemplate: "Galioja: {start} - {end}",
     todayFromTemplate: "Siandien nuo {start}",
@@ -316,10 +288,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "mt-MT",
     municipalityLabel: "Kunsill",
     heatWarningTitle: "Twissija tas-sahna",
-    coldWarningTitle: "Twissija tal-kesaha",
     heatBodyTemplate:
       "F'{name} intlahet livell ta' twissija {level}. Segwi mizuri ta' protezzjoni mis-sahna ta' Hitze-V.",
-    coldBodyTemplate: "Kesaha estrema f'{name}. Ilbes taghmir ta' protezzjoni mill-kesaha.",
     todayRangeTemplate: "Illum minn {start} sa {end}",
     validRangeTemplate: "Validu: {start} - {end}",
     todayFromTemplate: "Illum minn {start}",
@@ -336,10 +306,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "nl-NL",
     municipalityLabel: "Gemeente",
     heatWarningTitle: "Hittewaarschuwing",
-    coldWarningTitle: "Koudewaarschuwing",
     heatBodyTemplate:
       "In {name} is waarschuwingsniveau {level} bereikt. Voer hittebeschermingsmaatregelen volgens Hitze-V uit.",
-    coldBodyTemplate: "Extreme kou in {name}. Draag koudebeschermingsuitrusting.",
     todayRangeTemplate: "Vandaag van {start} tot {end}",
     validRangeTemplate: "Geldig: {start} - {end}",
     todayFromTemplate: "Vandaag vanaf {start}",
@@ -356,10 +324,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "pl-PL",
     municipalityLabel: "Gmina",
     heatWarningTitle: "Ostrzezenie przed upalem",
-    coldWarningTitle: "Ostrzezenie przed zimnem",
     heatBodyTemplate:
       "W {name} osiagnieto poziom ostrzezenia {level}. Zastosuj srodki ochrony przed upalem wg Hitze-V.",
-    coldBodyTemplate: "Ekstremalne zimno w {name}. Uzywaj sprzetu ochrony przed zimnem.",
     todayRangeTemplate: "Dzis od {start} do {end}",
     validRangeTemplate: "Wazne: {start} - {end}",
     todayFromTemplate: "Dzis od {start}",
@@ -376,10 +342,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "pt-PT",
     municipalityLabel: "Municipio",
     heatWarningTitle: "Alerta de calor",
-    coldWarningTitle: "Alerta de frio",
     heatBodyTemplate:
       "No municipio de {name} foi atingido o nivel de alerta {level}. Aplique medidas de protecao de calor segundo o Hitze-V.",
-    coldBodyTemplate: "Frio extremo em {name}. Use equipamento de protecao contra o frio.",
     todayRangeTemplate: "Hoje das {start} as {end}",
     validRangeTemplate: "Valido: {start} - {end}",
     todayFromTemplate: "Hoje a partir das {start}",
@@ -396,10 +360,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "ro-RO",
     municipalityLabel: "Municipiu",
     heatWarningTitle: "Avertizare de caldura",
-    coldWarningTitle: "Avertizare de frig",
     heatBodyTemplate:
       "In {name} a fost atins nivelul de avertizare {level}. Aplicati masurile de protectie la caldura conform Hitze-V.",
-    coldBodyTemplate: "Frig extrem in {name}. Purtati echipament de protectie impotriva frigului.",
     todayRangeTemplate: "Astazi intre {start} si {end}",
     validRangeTemplate: "Valabil: {start} - {end}",
     todayFromTemplate: "Astazi de la {start}",
@@ -416,10 +378,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "sv-SE",
     municipalityLabel: "Kommun",
     heatWarningTitle: "Varning for varme",
-    coldWarningTitle: "Varning for kyla",
     heatBodyTemplate:
       "I {name} har varningsniva {level} uppnatts. Folj Hitze-V:s atgarder for varmeskydd.",
-    coldBodyTemplate: "Extrem kyla i {name}. Bar utrustning for koldskydd.",
     todayRangeTemplate: "I dag fran {start} till {end}",
     validRangeTemplate: "Giltig: {start} - {end}",
     todayFromTemplate: "I dag fran {start}",
@@ -436,10 +396,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "sk-SK",
     municipalityLabel: "Obec",
     heatWarningTitle: "Upozornenie na horucavu",
-    coldWarningTitle: "Upozornenie na chlad",
     heatBodyTemplate:
       "V oblasti {name} bola dosiahnuta uroven varovania {level}. Uplatnite opatrenia ochrany pred horucavou podla Hitze-V.",
-    coldBodyTemplate: "Extremny chlad v oblasti {name}. Pouzivajte ochrannu vybavu proti chladu.",
     todayRangeTemplate: "Dnes od {start} do {end}",
     validRangeTemplate: "Platne: {start} - {end}",
     todayFromTemplate: "Dnes od {start}",
@@ -456,10 +414,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "sl-SI",
     municipalityLabel: "Obcina",
     heatWarningTitle: "Opozorilo za vrocino",
-    coldWarningTitle: "Opozorilo za mraz",
     heatBodyTemplate:
       "V obcini {name} je dosezena stopnja opozorila {level}. Uporabite ukrepe zascite pred vrocino po Hitze-V.",
-    coldBodyTemplate: "Ekstremen mraz v obcini {name}. Nosite opremo za zascito pred mrazom.",
     todayRangeTemplate: "Danes od {start} do {end}",
     validRangeTemplate: "Velja: {start} - {end}",
     todayFromTemplate: "Danes od {start}",
@@ -476,10 +432,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "es-ES",
     municipalityLabel: "Municipio",
     heatWarningTitle: "Alerta de calor",
-    coldWarningTitle: "Alerta de frio",
     heatBodyTemplate:
       "En {name} se ha alcanzado el nivel de alerta {level}. Aplique las medidas de proteccion frente al calor de Hitze-V.",
-    coldBodyTemplate: "Frio extremo en {name}. Use equipo de proteccion contra el frio.",
     todayRangeTemplate: "Hoy de {start} a {end}",
     validRangeTemplate: "Valido: {start} - {end}",
     todayFromTemplate: "Hoy desde {start}",
@@ -496,10 +450,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "cs-CZ",
     municipalityLabel: "Obec",
     heatWarningTitle: "Varovani pred vedrem",
-    coldWarningTitle: "Varovani pred chladem",
     heatBodyTemplate:
       "V oblasti {name} byl dosazen stupen varovani {level}. Provedte opatreni ochrany pred vedrem podle Hitze-V.",
-    coldBodyTemplate: "Extremni chlad v oblasti {name}. Pouzivejte vybaveni pro ochranu pred chladem.",
     todayRangeTemplate: "Dnes od {start} do {end}",
     validRangeTemplate: "Platnost: {start} - {end}",
     todayFromTemplate: "Dnes od {start}",
@@ -516,10 +468,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "hu-HU",
     municipalityLabel: "Onkormanyzat",
     heatWarningTitle: "Hoszegriasztas",
-    coldWarningTitle: "Hidegriasztas",
     heatBodyTemplate:
       "{name} teruleten elertek a {level} riasztasi szintet. Alkalmazza a Hitze-V hosvedelmi intezkedeseit.",
-    coldBodyTemplate: "Szelseges hideg {name} teruleten. Viseljen hideg elleni vedofelszerelest.",
     todayRangeTemplate: "Ma {start}-{end}",
     validRangeTemplate: "Ervenyes: {start} - {end}",
     todayFromTemplate: "Ma {start}-tol",
@@ -536,10 +486,8 @@ const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates
     localeTag: "tr-TR",
     municipalityLabel: "Belediye",
     heatWarningTitle: "Sicaklik uyarisi",
-    coldWarningTitle: "Soguk uyarisi",
     heatBodyTemplate:
       "{name} bolgesinde {level} uyari seviyesi goruldu. Hitze-V sicaklik korunma onlemlerini uygulayin.",
-    coldBodyTemplate: "{name} bolgesinde asiri soguk. Soguga karsi koruyucu ekipman kullanin.",
     todayRangeTemplate: "Bugun {start} - {end}",
     validRangeTemplate: "Gecerli: {start} - {end}",
     todayFromTemplate: "Bugun {start} itibariyla",
@@ -570,9 +518,7 @@ export interface PushLocalization {
   localeTag: string;
   municipalityLabel: string;
   heatWarningTitle: string;
-  coldWarningTitle: string;
   buildHeatBody: (name: string, level: number) => string;
-  buildColdBody: (name: string) => string;
   formatTodayRange: (startClock: string, endClock: string) => string;
   formatValidRange: (startText: string, endText: string) => string;
   formatTodayFrom: (startClock: string) => string;
@@ -622,10 +568,8 @@ export function pushLocalizationFor(languageCode: SupportedPushLanguage): PushLo
     localeTag: templates.localeTag,
     municipalityLabel: templates.municipalityLabel,
     heatWarningTitle: templates.heatWarningTitle,
-    coldWarningTitle: templates.coldWarningTitle,
     buildHeatBody: (name: string, level: number) =>
       formatTemplate(templates.heatBodyTemplate, { name, level }),
-    buildColdBody: (name: string) => formatTemplate(templates.coldBodyTemplate, { name }),
     formatTodayRange: (startClock: string, endClock: string) =>
       formatTemplate(templates.todayRangeTemplate, { start: startClock, end: endClock }),
     formatValidRange: (startText: string, endText: string) =>

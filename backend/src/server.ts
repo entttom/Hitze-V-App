@@ -1,5 +1,7 @@
 import express, { type Request, type Response } from "express";
+import { isEnvFlagEnabled } from "../api/cron/env";
 import {
+  DEFAULT_PUSH_LANGUAGE,
   executeHitzeCron,
   listTestMunicipalityOptions,
   listSupportedPushLanguages,
@@ -15,22 +17,36 @@ const app = express();
 app.use(express.json());
 
 const port = Number(process.env.PORT ?? "3000");
-const cronSecret = process.env.CRON_SECRET;
+const cronSecret = process.env.CRON_SECRET?.trim();
 const developMode = isEnvFlagEnabled(process.env.develop) || isEnvFlagEnabled(process.env.DEVELOP);
 
-function isEnvFlagEnabled(value: string | undefined): boolean {
-  if (!value) {
-    return false;
-  }
-
-  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+if (!cronSecret) {
+  console.error(
+    [
+      "",
+      "================================================================",
+      "  FATAL: CRON_SECRET is missing or empty.",
+      "================================================================",
+      "",
+      "  Without CRON_SECRET, the /cron/hitze endpoint cannot",
+      "  authenticate cron triggers and would be publicly callable.",
+      "  The server refuses to start fail-open.",
+      "",
+      "  Fix:",
+      "    1. Generate a strong random value:",
+      "         openssl rand -hex 32",
+      "    2. Set CRON_SECRET in your environment.",
+      "       (Coolify: Resources -> Backend -> Environment Variables)",
+      "    3. Restart the container.",
+      "",
+      "================================================================",
+      "",
+    ].join("\n")
+  );
+  process.exit(1);
 }
 
 function isAuthorized(req: Request): boolean {
-  if (!cronSecret) {
-    return true;
-  }
-
   const header = req.header("authorization") ?? "";
   return header === `Bearer ${cronSecret}`;
 }
@@ -86,23 +102,14 @@ app.post("/cron/hitze", async (req: Request, res: Response) => {
   res.status(result.status).json(result.body);
 });
 
-app.get("/cron/hitze", async (req: Request, res: Response) => {
-  const result = await executeHitzeCron(req.method);
-  if (result.headers) {
-    for (const [key, value] of Object.entries(result.headers)) {
-      res.setHeader(key, value);
-    }
-  }
-
-  res.status(result.status).json(result.body);
-});
-
 function renderTestPushPage(
   municipalities: TestMunicipalityOption[],
-  supportedLanguages: SupportedPushLanguage[]
+  supportedLanguages: SupportedPushLanguage[],
+  defaultLanguage: SupportedPushLanguage
 ): string {
   const municipalityPayload = JSON.stringify(municipalities).replace(/</g, "\\u003c");
   const languagePayload = JSON.stringify(supportedLanguages).replace(/</g, "\\u003c");
+  const defaultLanguagePayload = JSON.stringify(defaultLanguage).replace(/</g, "\\u003c");
 
   return `<!doctype html>
 <html lang="de">
@@ -375,6 +382,7 @@ function renderTestPushPage(
     <script>
       const municipalities = ${municipalityPayload};
       const supportedLanguages = ${languagePayload};
+      const defaultLanguage = ${defaultLanguagePayload};
       const selectedIds = new Set();
 
       const titleInput = document.getElementById("title");
@@ -391,15 +399,15 @@ function renderTestPushPage(
       const clearSelectionButton = document.getElementById("clearSelectionButton");
 
       function selectedLanguage() {
-        const value = languageSelect.value || "de";
-        return supportedLanguages.includes(value) ? value : "de";
+        const value = languageSelect.value || defaultLanguage;
+        return supportedLanguages.includes(value) ? value : defaultLanguage;
       }
 
       for (const languageCode of supportedLanguages) {
         const option = document.createElement("option");
         option.value = languageCode;
         option.textContent = languageCode;
-        if (languageCode === "de") {
+        if (languageCode === defaultLanguage) {
           option.selected = true;
         }
         languageSelect.appendChild(option);
@@ -529,11 +537,17 @@ function renderTestPushPage(
             throw new Error(result.message || "Testversand fehlgeschlagen.");
           }
 
+          const failedCount = result.failedCount || 0;
+          const summaryLine = failedCount > 0
+            ? "Teilweise versendet. Erfolgreich: " + result.sentCount + ", Fehler: " + failedCount
+            : "Versand erfolgreich. Empfänger: " + result.sentCount;
+          const detailBlocks = ["Erfolgreich:\\n" + JSON.stringify(result.recipients, null, 2)];
+          if (failedCount > 0) {
+            detailBlocks.push("Fehler:\\n" + JSON.stringify(result.failures, null, 2));
+          }
           setStatus(
-            "Versand erfolgreich.\\n" +
-              "Empfänger: " + result.sentCount + "\\n\\n" +
-              JSON.stringify(result.recipients, null, 2),
-            "success"
+            summaryLine + "\\n\\n" + detailBlocks.join("\\n\\n"),
+            failedCount > 0 ? "error" : "success"
           );
         } catch (error) {
           setStatus(error instanceof Error ? error.message : String(error), "error");
@@ -561,7 +575,13 @@ if (developMode) {
     res
       .status(200)
       .type("html")
-      .send(renderTestPushPage(listTestMunicipalityOptions(), listSupportedPushLanguages()));
+      .send(
+        renderTestPushPage(
+          listTestMunicipalityOptions(),
+          listSupportedPushLanguages(),
+          DEFAULT_PUSH_LANGUAGE
+        )
+      );
   });
 
   app.post("/test/push", async (req: Request, res: Response) => {
@@ -647,7 +667,9 @@ if (developMode) {
         ok: true,
         lang: parsedLang.value,
         sentCount: result.sent.length,
+        failedCount: result.failed.length,
         recipients: result.sent,
+        failures: result.failed,
       });
     } catch (error) {
       res.status(500).json({
