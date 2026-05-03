@@ -6,6 +6,7 @@ import { getMessaging, type Messaging } from "firebase-admin/messaging";
 import { createClient, type RedisClientType } from "redis";
 import * as XLSX from "xlsx";
 import { isEnvFlagEnabled } from "./env";
+import { sendPushoverReport } from "./pushover";
 import {
   DEFAULT_PUSH_LANGUAGE,
   SUPPORTED_PUSH_LANGUAGES,
@@ -1679,6 +1680,22 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
       failedTargets,
       durationMs: Date.now() - startedAt,
     };
+
+    if (normalizedWarnings.length > 0 && sendCandidates.length > 0) {
+      await sendPushoverReport({
+        requestId,
+        processedWarnings: response.processedWarnings,
+        affectedMunicipalities: response.affectedMunicipalities,
+        sent: response.sent,
+        attempted: sendCandidates.length,
+        skippedRateLimited: response.skippedRateLimited,
+        skippedQuietHours: response.skippedQuietHours,
+        failed: response.failed,
+        failedMunicipalities: response.failedMunicipalities,
+        failedTargets: response.failedTargets,
+        durationMs: response.durationMs,
+      });
+    }
 
     return {
       status: 200,

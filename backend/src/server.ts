@@ -1,5 +1,6 @@
 import express, { type Request, type Response } from "express";
 import { isEnvFlagEnabled } from "../api/cron/env";
+import { isPushoverConfigured } from "../api/cron/pushover";
 import {
   DEFAULT_PUSH_LANGUAGE,
   executeHitzeCron,
@@ -738,4 +739,11 @@ if (developMode) {
 
 app.listen(port, "0.0.0.0", () => {
   console.log(`Hitze backend listening on port ${port} (develop mode: ${developMode})`);
+  if (isPushoverConfigured()) {
+    console.log("Pushover reports enabled");
+  } else {
+    console.log(
+      "Pushover reports disabled (set PUSHOVER_APP_TOKEN and PUSHOVER_USER_KEY to enable)"
+    );
+  }
 });
