@@ -18,6 +18,7 @@ import {
 const GEOSPHERE_WARNSTATUS_URL = "https://warnungen.zamg.at/wsapp/api/getWarnstatus";
 const REDIS_SIGNATURE_KEY = "hitze:v1:signatures";
 const REDIS_SEND_META_KEY = "hitze:v1:send_meta";
+const REDIS_CRON_LOCK_KEY = "hitze:v1:cron_lock";
 const SEND_META_RETENTION_DAYS = 7;
 const WARNING_TYPE_HEAT = 6;
 const WARNING_TYPE_COLD = 7;
@@ -25,6 +26,10 @@ const MUNICIPALITY_LIST_FILE = "gemliste_knz.xls";
 const DEFAULT_MIN_WARNING_LEVEL = 2;
 const GEO_FETCH_TIMEOUT_MS = 10_000;
 const GEO_FETCH_RETRIES = 2;
+const DEFAULT_FCM_SEND_CONCURRENCY = 50;
+const DEFAULT_CRON_LOCK_TTL_SECONDS = 30 * 60;
+const PUSH_QUIET_HOURS_START = 20;
+const PUSH_QUIET_HOURS_END = 6;
 
 let messagingClient: Messaging | null = null;
 let redisClient: RedisClientType | null = null;
@@ -55,13 +60,20 @@ interface HandlerSuccessResponse {
   requestId: string;
   processedWarnings: number;
   affectedMunicipalities: number;
+  affectedLanguageTargets: number;
+  fcmSendConcurrency: number;
+  cronLockTtlSeconds: number;
+  pushQuietHoursActive: boolean;
+  pushQuietHoursWindow: string;
   sent: number;
   skippedUnchanged: number;
   skippedRateLimited: number;
+  skippedQuietHours: number;
   cleared: number;
   failed: number;
   durationMs: number;
   failedMunicipalities: string[];
+  failedTargets: string[];
 }
 
 interface AggregateSendMetadata {
@@ -77,6 +89,9 @@ interface TimeWindow {
 
 interface SendCandidate {
   aggregate: MunicipalityAggregate;
+  languageCode: SupportedPushLanguage;
+  stateKey: string;
+  signature: string;
   previousTimeWindow: TimeWindow | null;
   timeWindowChanged: boolean;
 }
@@ -651,6 +666,63 @@ function getMinWarningLevel(): number {
   return value;
 }
 
+function getBoundedIntegerEnv(
+  name: string,
+  defaultValue: number,
+  min: number,
+  max: number
+): number {
+  const raw = process.env[name];
+  if (!raw) {
+    return defaultValue;
+  }
+
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    return defaultValue;
+  }
+
+  return value;
+}
+
+function getFcmSendConcurrency(): number {
+  return getBoundedIntegerEnv(
+    "HITZE_FCM_SEND_CONCURRENCY",
+    DEFAULT_FCM_SEND_CONCURRENCY,
+    1,
+    500
+  );
+}
+
+function getCronLockTtlSeconds(): number {
+  return getBoundedIntegerEnv(
+    "HITZE_CRON_LOCK_TTL_SECONDS",
+    DEFAULT_CRON_LOCK_TTL_SECONDS,
+    60,
+    60 * 60
+  );
+}
+
+function currentHourVienna(epochMs: number = Date.now()): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Vienna",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(epochMs));
+
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  return Number.isInteger(hour) ? hour : new Date(epochMs).getUTCHours();
+}
+
+function isPushQuietHoursVienna(epochMs: number = Date.now()): boolean {
+  const hour = currentHourVienna(epochMs);
+  return hour >= PUSH_QUIET_HOURS_START || hour < PUSH_QUIET_HOURS_END;
+}
+
+function pushQuietHoursWindowLabel(): string {
+  return `${String(PUSH_QUIET_HOURS_START).padStart(2, "0")}:00-${String(PUSH_QUIET_HOURS_END).padStart(2, "0")}:00 Europe/Vienna`;
+}
+
 function isEnvFlagEnabled(value: string | undefined): boolean {
   if (!value) {
     return false;
@@ -671,6 +743,45 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function allSettledWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  task: (item: T, index: number) => Promise<R>
+): Promise<Array<PromiseSettledResult<R>>> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const results = new Array<PromiseSettledResult<R>>(items.length);
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+
+      try {
+        results[index] = {
+          status: "fulfilled",
+          value: await task(items[index], index),
+        };
+      } catch (reason) {
+        results[index] = {
+          status: "rejected",
+          reason,
+        };
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: workerCount }, () => worker())
+  );
+
+  return results;
 }
 
 async function fetchJsonWithRetry(url: string, requestId: string): Promise<unknown> {
@@ -853,6 +964,44 @@ function getFirebaseMessagingClient(): Messaging {
 class RedisStateClient {
   constructor(private readonly client: RedisClientType) {}
 
+  async acquireCronLock(token: string, ttlSeconds: number): Promise<boolean> {
+    try {
+      const result = await this.client.set(REDIS_CRON_LOCK_KEY, token, {
+        expiration: { type: "EX", value: ttlSeconds },
+        condition: "NX",
+      });
+
+      return result === "OK";
+    } catch (error) {
+      throw new RedisUnavailableError(
+        `Redis SET lock failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  async releaseCronLock(token: string): Promise<boolean> {
+    try {
+      const result = await this.client.eval(
+        `
+          if redis.call("GET", KEYS[1]) == ARGV[1] then
+            return redis.call("DEL", KEYS[1])
+          end
+          return 0
+        `,
+        {
+          keys: [REDIS_CRON_LOCK_KEY],
+          arguments: [token],
+        }
+      );
+
+      return result === 1;
+    } catch (error) {
+      throw new RedisUnavailableError(
+        `Redis lock release failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
   async getSignatures(): Promise<Record<string, string>> {
     try {
       const result = await this.client.hGetAll(REDIS_SIGNATURE_KEY);
@@ -1001,6 +1150,13 @@ function topicForMunicipalityLanguage(
 
 function aggregateStateKey(aggregate: MunicipalityAggregate): string {
   return `${aggregate.kind}:${aggregate.municipalityId}`;
+}
+
+function aggregateLanguageStateKey(
+  aggregate: MunicipalityAggregate,
+  languageCode: SupportedPushLanguage
+): string {
+  return `${aggregateStateKey(aggregate)}:${languageCode}`;
 }
 
 function currentDayKeyVienna(epochMs: number = Date.now()): string {
@@ -1227,83 +1383,58 @@ export async function sendTestPushToToken(
 async function sendMunicipalityWarning(
   messaging: Messaging,
   aggregate: MunicipalityAggregate,
+  languageCode: SupportedPushLanguage,
   previousTimeWindow: TimeWindow | null = null,
   timeWindowChanged: boolean = false
 ): Promise<void> {
   const warningIds = Array.from(aggregate.warningIds).sort();
   const timeWindow = aggregateTimeWindow(aggregate);
-  const sendResults = await Promise.allSettled(
-    SUPPORTED_PUSH_LANGUAGES.map(async (languageCode) => {
-      const topic = topicForMunicipalityLanguage(aggregate.municipalityId, languageCode);
-      const content = pushContentForWarning(
-        aggregate,
-        timeWindow,
-        languageCode,
-        previousTimeWindow,
-        timeWindowChanged
-      );
-      const collapseId = `${content.collapsePrefix}-${aggregate.municipalityId}-${languageCode}`;
-      const warningStartLocal = formatPushTime(timeWindow.start, languageCode);
-      const warningEndLocal = formatPushTime(timeWindow.end, languageCode);
-
-      await messaging.send({
-        topic,
-        notification: {
-          title: content.title,
-          body: content.body,
-        },
-        data: {
-          gemeindenr: aggregate.municipalityId,
-          gemeindename: municipalityDisplayName(
-            aggregate.municipalityId,
-            languageCode
-          ),
-          warningKind: aggregate.kind,
-          warningLevel: String(aggregate.maxLevel),
-          warningIds: warningIds.join(","),
-          warningStart: timeWindow.start,
-          warningEnd: timeWindow.end,
-          warningStartLocal,
-          warningEndLocal,
-          source: "geosphere",
-          languageCode,
-        },
-        apns: {
-          headers: {
-            "apns-collapse-id": collapseId,
-          },
-          payload: {
-            aps: {
-              sound: "default",
-              "thread-id": collapseId,
-            },
-          },
-        },
-      });
-    })
+  const topic = topicForMunicipalityLanguage(aggregate.municipalityId, languageCode);
+  const content = pushContentForWarning(
+    aggregate,
+    timeWindow,
+    languageCode,
+    previousTimeWindow,
+    timeWindowChanged
   );
+  const collapseId = `${content.collapsePrefix}-${aggregate.municipalityId}-${languageCode}`;
+  const warningStartLocal = formatPushTime(timeWindow.start, languageCode);
+  const warningEndLocal = formatPushTime(timeWindow.end, languageCode);
 
-  const failedLanguages = sendResults
-    .map((result, index) => ({ result, languageCode: SUPPORTED_PUSH_LANGUAGES[index] }))
-    .filter(
-      (entry): entry is { result: PromiseRejectedResult; languageCode: SupportedPushLanguage } =>
-        entry.result.status === "rejected"
-    );
-
-  if (failedLanguages.length > 0) {
-    const details = failedLanguages.map((entry) => ({
-      languageCode: entry.languageCode,
-      error:
-        entry.result.reason instanceof Error
-          ? entry.result.reason.message
-          : String(entry.result.reason),
-    }));
-    throw new AppError(
-      500,
-      "FCM_MULTILINGUAL_SEND_FAILED",
-      `Push send failed for ${aggregate.municipalityId}: ${JSON.stringify(details)}`
-    );
-  }
+  await messaging.send({
+    topic,
+    notification: {
+      title: content.title,
+      body: content.body,
+    },
+    data: {
+      gemeindenr: aggregate.municipalityId,
+      gemeindename: municipalityDisplayName(
+        aggregate.municipalityId,
+        languageCode
+      ),
+      warningKind: aggregate.kind,
+      warningLevel: String(aggregate.maxLevel),
+      warningIds: warningIds.join(","),
+      warningStart: timeWindow.start,
+      warningEnd: timeWindow.end,
+      warningStartLocal,
+      warningEndLocal,
+      source: "geosphere",
+      languageCode,
+    },
+    apns: {
+      headers: {
+        "apns-collapse-id": collapseId,
+      },
+      payload: {
+        aps: {
+          sound: "default",
+          "thread-id": collapseId,
+        },
+      },
+    },
+  });
 }
 
 function mapError(error: unknown): AppError {
@@ -1334,6 +1465,9 @@ export {
 export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpResponse> {
   const startedAt = Date.now();
   const requestId = randomUUID();
+  let redis: RedisStateClient | null = null;
+  let lockToken: string | null = null;
+  let lockAcquired = false;
 
   if (method && !["GET", "POST"].includes(method.toUpperCase())) {
     return {
@@ -1349,6 +1483,24 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
 
   try {
     const minWarningLevel = getMinWarningLevel();
+    redis = await getRedisClient();
+    lockToken = randomUUID();
+    const cronLockTtlSeconds = getCronLockTtlSeconds();
+    lockAcquired = await redis.acquireCronLock(lockToken, cronLockTtlSeconds);
+
+    if (!lockAcquired) {
+      return {
+        status: 200,
+        body: {
+          requestId,
+          skipped: true,
+          skipReason: "CRON_ALREADY_RUNNING",
+          message: "Another heat warning cron run is still active.",
+          durationMs: Date.now() - startedAt,
+        },
+      };
+    }
+
     const normalizedWarnings = await fetchGeoSphereWarnings(requestId, minWarningLevel);
     const aggregatesMap = aggregateWarnings(normalizedWarnings);
 
@@ -1358,11 +1510,12 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
 
     const currentSignatures: Record<string, string> = {};
     for (const aggregate of aggregates) {
-      currentSignatures[aggregateStateKey(aggregate)] = buildMunicipalitySignature(aggregate);
+      const signature = buildMunicipalitySignature(aggregate);
+      for (const languageCode of SUPPORTED_PUSH_LANGUAGES) {
+        currentSignatures[aggregateLanguageStateKey(aggregate, languageCode)] = signature;
+      }
     }
 
-    // Fail-closed: without Redis state comparison no push is sent.
-    const redis = await getRedisClient();
     const previousSignatures = await redis.getSignatures();
     const previousSendMetadata = await redis.getSendMetadata();
     const todayDayKey = currentDayKeyVienna();
@@ -1379,77 +1532,103 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
       });
     }
 
-    const previousAggregateKeys = new Set(Object.keys(previousSignatures));
-    const currentAggregateKeys = new Set(Object.keys(currentSignatures));
+    const previousStateKeys = new Set([
+      ...Object.keys(previousSignatures),
+      ...Object.keys(previousSendMetadata),
+    ]);
+    const currentStateKeys = new Set(Object.keys(currentSignatures));
+    const currentStateKeyCount = Object.keys(currentSignatures).length;
 
-    const changedAggregateKeys = aggregates
-      .map((aggregate) => aggregateStateKey(aggregate))
+    const changedStateKeys = Object.keys(currentSignatures)
       .filter((key) => previousSignatures[key] !== currentSignatures[key]);
 
-    const removedAggregateKeys = Array.from(previousAggregateKeys).filter((key) => !currentAggregateKeys.has(key));
-
-    const changedAggregateKeySet = new Set(changedAggregateKeys);
-    const changedAggregates = aggregates.filter((aggregate) => changedAggregateKeySet.has(aggregateStateKey(aggregate)));
+    const removedStateKeys = Array.from(previousStateKeys).filter((key) => !currentStateKeys.has(key));
 
     const sendCandidates: SendCandidate[] = [];
     const skippedRateLimitedKeys = new Set<string>();
+    const skippedQuietHoursKeys = new Set<string>();
+    const pushQuietHoursActive = isPushQuietHoursVienna();
 
-    for (const aggregate of changedAggregates) {
-      const key = aggregateStateKey(aggregate);
-      const previousMetadata = previousSendMetadata[key];
-      const currentTimeWindow = aggregateTimeWindow(aggregate);
-      const currentStart = currentTimeWindow.start;
-      const currentEnd = currentTimeWindow.end;
-      const sentToday = previousMetadata?.dayKey === todayDayKey;
-      const beginChanged = (previousMetadata?.start ?? "") !== currentStart;
-      const endChanged = (previousMetadata?.end ?? "") !== currentEnd;
+    for (const aggregate of aggregates) {
+      const signature = buildMunicipalitySignature(aggregate);
 
-      if (!sentToday || beginChanged || endChanged) {
-        sendCandidates.push({
-          aggregate,
-          previousTimeWindow: previousMetadata
-            ? {
-                start: previousMetadata.start,
-                end: previousMetadata.end,
-              }
-            : null,
-          timeWindowChanged: beginChanged || endChanged,
-        });
-        continue;
+      for (const languageCode of SUPPORTED_PUSH_LANGUAGES) {
+        const key = aggregateLanguageStateKey(aggregate, languageCode);
+        if (previousSignatures[key] === signature) {
+          continue;
+        }
+
+        const previousMetadata = previousSendMetadata[key];
+        const currentTimeWindow = aggregateTimeWindow(aggregate);
+        const currentStart = currentTimeWindow.start;
+        const currentEnd = currentTimeWindow.end;
+        const sentToday = previousMetadata?.dayKey === todayDayKey;
+        const beginChanged = (previousMetadata?.start ?? "") !== currentStart;
+        const endChanged = (previousMetadata?.end ?? "") !== currentEnd;
+
+        if (!sentToday || beginChanged || endChanged) {
+          if (pushQuietHoursActive) {
+            skippedQuietHoursKeys.add(key);
+            continue;
+          }
+
+          sendCandidates.push({
+            aggregate,
+            languageCode,
+            stateKey: key,
+            signature,
+            previousTimeWindow: previousMetadata
+              ? {
+                  start: previousMetadata.start,
+                  end: previousMetadata.end,
+                }
+              : null,
+            timeWindowChanged: beginChanged || endChanged,
+          });
+          continue;
+        }
+
+        skippedRateLimitedKeys.add(key);
       }
-
-      skippedRateLimitedKeys.add(key);
     }
 
-    const messaging = getFirebaseMessagingClient();
+    const fcmSendConcurrency = getFcmSendConcurrency();
 
-    const sendResults = await Promise.allSettled(
-      sendCandidates.map(async (candidate) => {
-        await sendMunicipalityWarning(
-          messaging,
-          candidate.aggregate,
-          candidate.previousTimeWindow,
-          candidate.timeWindowChanged
-        );
-        return candidate.aggregate.municipalityId;
-      })
-    );
+    const sendResults =
+      sendCandidates.length > 0
+        ? await allSettledWithConcurrency(
+            sendCandidates,
+            fcmSendConcurrency,
+            async (candidate) => {
+              const messaging = getFirebaseMessagingClient();
+              await sendMunicipalityWarning(
+                messaging,
+                candidate.aggregate,
+                candidate.languageCode,
+                candidate.previousTimeWindow,
+                candidate.timeWindowChanged
+              );
+              return candidate.stateKey;
+            }
+          )
+        : [];
 
     const signaturesToPersist: Record<string, string> = {};
     const sendMetadataToPersist: Record<string, AggregateSendMetadata> = {};
-    const failedMunicipalities: string[] = [];
+    const failedMunicipalities = new Set<string>();
+    const failedTargets: string[] = [];
 
     sendResults.forEach((result, index) => {
       const candidate = sendCandidates[index];
       const aggregate = candidate?.aggregate;
-      const key = aggregate ? aggregateStateKey(aggregate) : null;
+      const key = candidate?.stateKey ?? null;
 
       if (!aggregate || !key) {
         return;
       }
 
       if (result.status === "fulfilled") {
-        signaturesToPersist[key] = currentSignatures[key];
+        signaturesToPersist[key] = candidate.signature;
         const timeWindow = aggregateTimeWindow(aggregate);
         sendMetadataToPersist[key] = {
           dayKey: todayDayKey,
@@ -1459,10 +1638,12 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
         return;
       }
 
-      failedMunicipalities.push(`${aggregate.kind}:${aggregate.municipalityId}`);
+      failedMunicipalities.add(`${aggregate.kind}:${aggregate.municipalityId}`);
+      failedTargets.push(key);
       console.error(`[${requestId}] fcm_send_failed`, {
         municipalityId: aggregate.municipalityId,
         warningKind: aggregate.kind,
+        languageCode: candidate.languageCode,
         error:
           result.reason instanceof Error
             ? result.reason.message
@@ -1482,19 +1663,26 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
       await redis.setSendMetadata(sendMetadataToPersist);
     }
 
-    const cleared = await redis.removeSignatures(removedAggregateKeys);
-    await redis.removeSendMetadata(removedAggregateKeys);
+    const cleared = await redis.removeSignatures(removedStateKeys);
+    await redis.removeSendMetadata(removedStateKeys);
 
     const response: HandlerSuccessResponse = {
       requestId,
       processedWarnings: normalizedWarnings.length,
       affectedMunicipalities: aggregates.length,
+      affectedLanguageTargets: currentStateKeyCount,
+      fcmSendConcurrency,
+      cronLockTtlSeconds,
+      pushQuietHoursActive,
+      pushQuietHoursWindow: pushQuietHoursWindowLabel(),
       sent: Object.keys(sendMetadataToPersist).length,
-      skippedUnchanged: aggregates.length - changedAggregateKeys.length,
+      skippedUnchanged: currentStateKeyCount - changedStateKeys.length,
       skippedRateLimited: skippedRateLimitedKeys.size,
+      skippedQuietHours: skippedQuietHoursKeys.size,
       cleared,
-      failed: failedMunicipalities.length,
-      failedMunicipalities,
+      failed: failedTargets.length,
+      failedMunicipalities: Array.from(failedMunicipalities),
+      failedTargets,
       durationMs: Date.now() - startedAt,
     };
 
@@ -1520,5 +1708,18 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
         durationMs: Date.now() - startedAt,
       },
     };
+  } finally {
+    if (redis && lockToken && lockAcquired) {
+      try {
+        await redis.releaseCronLock(lockToken);
+      } catch (releaseError) {
+        console.error(`[${requestId}] cron_lock_release_failed`, {
+          error:
+            releaseError instanceof Error
+              ? releaseError.message
+              : String(releaseError),
+        });
+      }
+    }
   }
 }
