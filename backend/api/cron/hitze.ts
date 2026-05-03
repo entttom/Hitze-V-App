@@ -1159,6 +1159,17 @@ function aggregateLanguageStateKey(
   return `${aggregateStateKey(aggregate)}:${languageCode}`;
 }
 
+function compareSendCandidates(left: SendCandidate, right: SendCandidate): number {
+  const leftGermanPriority = left.languageCode === "de" ? 0 : 1;
+  const rightGermanPriority = right.languageCode === "de" ? 0 : 1;
+
+  if (leftGermanPriority !== rightGermanPriority) {
+    return leftGermanPriority - rightGermanPriority;
+  }
+
+  return left.stateKey.localeCompare(right.stateKey);
+}
+
 function currentDayKeyVienna(epochMs: number = Date.now()): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Europe/Vienna",
@@ -1591,6 +1602,8 @@ export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpRe
         skippedRateLimitedKeys.add(key);
       }
     }
+
+    sendCandidates.sort(compareSendCandidates);
 
     const fcmSendConcurrency = getFcmSendConcurrency();
 
