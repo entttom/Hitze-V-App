@@ -6,6 +6,7 @@ import {
   executeHitzeCron,
   listTestMunicipalityOptions,
   listSupportedPushLanguages,
+  loadCurrentWarningsSnapshot,
   parseSupportedPushLanguage,
   sendTestPushNotification,
   sendTestPushNotifications,
@@ -322,6 +323,7 @@ function renderTestPushPage(
   <body>
     <main>
       <h1>Hitze-V Testversand</h1>
+      <p><a href="/test/warnings/ui">→ Aktuelle Warnungen ansehen</a></p>
 
       <div class="layout">
         <section class="panel stack">
@@ -563,6 +565,395 @@ function renderTestPushPage(
 </html>`;
 }
 
+function renderWarningsPage(): string {
+  return `<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hitze-V · Aktuelle Warnungen</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4efe7;
+        --panel: #fffaf3;
+        --panel-strong: #fff4df;
+        --line: #d8cbb9;
+        --text: #2b241c;
+        --muted: #6e6255;
+        --accent: #c74b2a;
+        --accent-dark: #8f2f17;
+        --error-bg: #fff0ec;
+        --error-line: #e0a090;
+        --level-1: #f0d28a;
+        --level-2: #e5933b;
+        --level-3: #c74b2a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top right, rgba(199, 75, 42, 0.15), transparent 30%),
+          linear-gradient(180deg, #f9f4ec 0%, var(--bg) 100%);
+        color: var(--text);
+      }
+
+      main {
+        max-width: 1160px;
+        margin: 0 auto;
+        padding: 32px 20px 40px;
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(2rem, 4vw, 3.4rem);
+        line-height: 0.95;
+        letter-spacing: -0.04em;
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: 1.05rem;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      a {
+        color: var(--accent-dark);
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 14px;
+        margin: 22px 0 18px;
+      }
+
+      .toolbar .status {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 22px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        color: white;
+        background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+      }
+
+      button:disabled {
+        cursor: wait;
+        opacity: 0.7;
+      }
+
+      .panel {
+        background: rgba(255, 250, 243, 0.94);
+        border: 1px solid rgba(216, 203, 185, 0.85);
+        border-radius: 24px;
+        box-shadow: 0 14px 40px rgba(82, 57, 30, 0.08);
+        padding: 20px;
+        margin-bottom: 18px;
+      }
+
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+      }
+
+      .meta-grid div {
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: var(--panel-strong);
+        border: 1px solid var(--line);
+      }
+
+      .meta-grid strong {
+        display: block;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+
+      .meta-grid span {
+        font-size: 0.98rem;
+        word-break: break-word;
+      }
+
+      .municipality-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .municipality {
+        display: grid;
+        grid-template-columns: 60px 1fr auto;
+        gap: 16px;
+        align-items: center;
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: #fffdf9;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 44px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        color: white;
+        font-weight: 800;
+        background: var(--level-1);
+      }
+
+      .badge.level-2 { background: var(--level-2); }
+      .badge.level-3 { background: var(--level-3); }
+
+      .municipality .title {
+        font-weight: 700;
+      }
+
+      .municipality .time {
+        color: var(--muted);
+        font-size: 0.9rem;
+        margin-top: 4px;
+      }
+
+      .municipality details {
+        margin-top: 6px;
+        font-size: 0.86rem;
+        color: var(--muted);
+      }
+
+      .municipality details ul {
+        margin: 6px 0 0;
+        padding-left: 18px;
+      }
+
+      .municipality .right {
+        text-align: right;
+        color: var(--muted);
+        font-size: 0.86rem;
+        white-space: nowrap;
+      }
+
+      .empty {
+        padding: 24px;
+        text-align: center;
+        color: var(--muted);
+      }
+
+      .error {
+        background: var(--error-bg);
+        border: 1px solid var(--error-line);
+        padding: 14px 16px;
+        border-radius: 18px;
+        color: var(--accent-dark);
+        margin-bottom: 18px;
+        white-space: pre-wrap;
+        display: none;
+      }
+
+      .error.active {
+        display: block;
+      }
+
+      @media (max-width: 600px) {
+        .municipality {
+          grid-template-columns: 50px 1fr;
+        }
+        .municipality .right {
+          grid-column: 1 / -1;
+          text-align: left;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Aktuelle Hitzewarnungen</h1>
+      <p>Live-Snapshot direkt aus der GeoSphere-API · keine Pushes, kein Redis-Write. <a href="/test/push/ui">→ Zum Testversand</a></p>
+
+      <div class="toolbar">
+        <button id="refreshButton" type="button">Aktualisieren</button>
+        <span class="status" id="status">Lade…</span>
+      </div>
+
+      <div id="error" class="error"></div>
+
+      <section class="panel">
+        <h2>Metadaten</h2>
+        <div class="meta-grid" id="meta"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Betroffene Gemeinden</h2>
+        <div id="municipalities" class="municipality-list"></div>
+      </section>
+    </main>
+
+    <script>
+      const refreshButton = document.getElementById("refreshButton");
+      const statusEl = document.getElementById("status");
+      const errorEl = document.getElementById("error");
+      const metaEl = document.getElementById("meta");
+      const municipalitiesEl = document.getElementById("municipalities");
+
+      const timeFmt = new Intl.DateTimeFormat("de-AT", {
+        timeZone: "Europe/Vienna",
+        dateStyle: "short",
+        timeStyle: "short",
+      });
+
+      function formatTime(iso) {
+        if (!iso) return "—";
+        const date = new Date(iso);
+        if (Number.isNaN(date.getTime())) return iso;
+        return timeFmt.format(date);
+      }
+
+      function setError(message) {
+        if (!message) {
+          errorEl.textContent = "";
+          errorEl.classList.remove("active");
+          return;
+        }
+        errorEl.textContent = message;
+        errorEl.classList.add("active");
+      }
+
+      function renderMeta(snapshot) {
+        const entries = [
+          ["Quelle", snapshot.source + (snapshot.sourceUrl ? " · " + snapshot.sourceUrl : "")],
+          ["Min. Warnstufe", String(snapshot.minWarningLevel)],
+          ["Features roh", String(snapshot.rawFeatureCount)],
+          ["Akzeptierte Warnungen", String(snapshot.acceptedWarningCount)],
+          ["Betroffene Gemeinden", String(snapshot.affectedMunicipalities.length)],
+          ["Request-ID", snapshot.requestId],
+        ];
+        metaEl.innerHTML = "";
+        for (const [label, value] of entries) {
+          const cell = document.createElement("div");
+          const lbl = document.createElement("strong");
+          lbl.textContent = label;
+          const val = document.createElement("span");
+          val.textContent = value;
+          cell.appendChild(lbl);
+          cell.appendChild(val);
+          metaEl.appendChild(cell);
+        }
+      }
+
+      function renderMunicipalities(snapshot) {
+        municipalitiesEl.innerHTML = "";
+
+        if (snapshot.affectedMunicipalities.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "Aktuell keine Hitzewarnungen über Stufe " + snapshot.minWarningLevel + ".";
+          municipalitiesEl.appendChild(empty);
+          return;
+        }
+
+        for (const m of snapshot.affectedMunicipalities) {
+          const row = document.createElement("div");
+          row.className = "municipality";
+
+          const badge = document.createElement("span");
+          badge.className = "badge level-" + m.maxLevel;
+          badge.textContent = "Stufe " + m.maxLevel;
+
+          const middle = document.createElement("div");
+          const title = document.createElement("div");
+          title.className = "title";
+          title.textContent = m.municipalityId + " · " + m.name;
+          middle.appendChild(title);
+
+          const time = document.createElement("div");
+          time.className = "time";
+          time.textContent = formatTime(m.start) + " → " + formatTime(m.end);
+          middle.appendChild(time);
+
+          if (m.contributingWarningIds.length > 0) {
+            const details = document.createElement("details");
+            const summary = document.createElement("summary");
+            summary.textContent = m.contributingWarningIds.length + " beitragende Warnung(en)";
+            details.appendChild(summary);
+            const list = document.createElement("ul");
+            for (const id of m.contributingWarningIds) {
+              const li = document.createElement("li");
+              li.textContent = id;
+              list.appendChild(li);
+            }
+            details.appendChild(list);
+            middle.appendChild(details);
+          }
+
+          const right = document.createElement("div");
+          right.className = "right";
+          right.textContent = m.contributingWarningIds.length + " Warnung(en)";
+
+          row.appendChild(badge);
+          row.appendChild(middle);
+          row.appendChild(right);
+          municipalitiesEl.appendChild(row);
+        }
+      }
+
+      async function loadSnapshot() {
+        refreshButton.disabled = true;
+        statusEl.textContent = "Lade…";
+
+        try {
+          const response = await fetch("/test/warnings/data", { cache: "no-store" });
+          const result = await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              (result && (result.message || result.errorCode)) || "Snapshot konnte nicht geladen werden."
+            );
+          }
+
+          setError("");
+          renderMeta(result);
+          renderMunicipalities(result);
+          statusEl.textContent =
+            "Zuletzt geladen: " + formatTime(result.fetchedAt) + " · Dauer: " + result.durationMs + " ms";
+        } catch (error) {
+          setError(error instanceof Error ? error.message : String(error));
+          statusEl.textContent = "Letzter Versuch fehlgeschlagen.";
+        } finally {
+          refreshButton.disabled = false;
+        }
+      }
+
+      refreshButton.addEventListener("click", () => {
+        void loadSnapshot();
+      });
+
+      void loadSnapshot();
+    </script>
+  </body>
+</html>`;
+}
+
 if (developMode) {
   app.get("/test", (_req: Request, res: Response) => {
     res.redirect("/test/push/ui");
@@ -583,6 +974,33 @@ if (developMode) {
           DEFAULT_PUSH_LANGUAGE
         )
       );
+  });
+
+  app.get("/test/warnings/ui", (_req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Surrogate-Control", "no-store");
+    res.status(200).type("html").send(renderWarningsPage());
+  });
+
+  app.get("/test/warnings/data", async (_req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Surrogate-Control", "no-store");
+
+    try {
+      const snapshot = await loadCurrentWarningsSnapshot();
+      res.status(200).json(snapshot);
+    } catch (error) {
+      const err = error as { status?: number; code?: string } | undefined;
+      const status = typeof err?.status === "number" ? err.status : 500;
+      res.status(status).json({
+        errorCode: err?.code ?? "WARNINGS_SNAPSHOT_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   app.post("/test/push", async (req: Request, res: Response) => {

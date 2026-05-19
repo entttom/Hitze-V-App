@@ -36,11 +36,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.parseSupportedPushLanguage = exports.normalizeSupportedPushLanguage = exports.listSupportedPushLanguages = void 0;
+exports.parseSupportedPushLanguage = exports.normalizeSupportedPushLanguage = exports.listSupportedPushLanguages = exports.DEFAULT_PUSH_LANGUAGE = void 0;
 exports.listTestMunicipalityOptions = listTestMunicipalityOptions;
 exports.sendTestPushNotification = sendTestPushNotification;
 exports.sendTestPushNotifications = sendTestPushNotifications;
 exports.sendTestPushToToken = sendTestPushToToken;
+exports.loadCurrentWarningsSnapshot = loadCurrentWarningsSnapshot;
 exports.executeHitzeCron = executeHitzeCron;
 const node_crypto_1 = require("node:crypto");
 const node_fs_1 = require("node:fs");
@@ -49,7 +50,10 @@ const app_1 = require("firebase-admin/app");
 const messaging_1 = require("firebase-admin/messaging");
 const redis_1 = require("redis");
 const XLSX = __importStar(require("xlsx"));
+const env_1 = require("./env");
+const pushover_1 = require("./pushover");
 const pushLocalization_1 = require("./pushLocalization");
+Object.defineProperty(exports, "DEFAULT_PUSH_LANGUAGE", { enumerable: true, get: function () { return pushLocalization_1.DEFAULT_PUSH_LANGUAGE; } });
 Object.defineProperty(exports, "listSupportedPushLanguages", { enumerable: true, get: function () { return pushLocalization_1.listSupportedPushLanguages; } });
 Object.defineProperty(exports, "normalizeSupportedPushLanguage", { enumerable: true, get: function () { return pushLocalization_1.normalizeSupportedPushLanguage; } });
 Object.defineProperty(exports, "parseSupportedPushLanguage", { enumerable: true, get: function () { return pushLocalization_1.parseSupportedPushLanguage; } });
@@ -59,7 +63,6 @@ const REDIS_SEND_META_KEY = "hitze:v1:send_meta";
 const REDIS_CRON_LOCK_KEY = "hitze:v1:cron_lock";
 const SEND_META_RETENTION_DAYS = 7;
 const WARNING_TYPE_HEAT = 6;
-const WARNING_TYPE_COLD = 7;
 const MUNICIPALITY_LIST_FILE = "gemliste_knz.xls";
 const DEFAULT_MIN_WARNING_LEVEL = 2;
 const GEO_FETCH_TIMEOUT_MS = 10_000;
@@ -178,14 +181,7 @@ function getWarningTimeWindow(properties) {
     };
 }
 function mapWarningTypeToKind(value) {
-    const numericType = asNumber(value);
-    if (numericType === WARNING_TYPE_HEAT) {
-        return "heat";
-    }
-    if (numericType === WARNING_TYPE_COLD) {
-        return "cold";
-    }
-    return null;
+    return asNumber(value) === WARNING_TYPE_HEAT ? "heat" : null;
 }
 function getWarningKind(properties) {
     const directType = properties.wtype ??
@@ -199,9 +195,6 @@ function getWarningKind(properties) {
     const textualType = asString(directType)?.toLowerCase();
     if (textualType && (textualType.includes("hitze") || textualType.includes("heat"))) {
         return "heat";
-    }
-    if (textualType && (textualType.includes("kälte") || textualType.includes("kaelte") || textualType.includes("cold"))) {
-        return "cold";
     }
     const rawInfo = getRawInfo(properties);
     if (!rawInfo) {
@@ -253,10 +246,6 @@ function normalizeWarning(rawFeature, index, minWarningLevel) {
     }
     const kind = getWarningKind(properties);
     if (!kind) {
-        return null;
-    }
-    // Product decision: ignore cold warnings completely.
-    if (kind === "cold") {
         return null;
     }
     const level = getWarningLevel(properties);
@@ -543,14 +532,8 @@ function isPushQuietHoursVienna(epochMs = Date.now()) {
 function pushQuietHoursWindowLabel() {
     return `${String(PUSH_QUIET_HOURS_START).padStart(2, "0")}:00-${String(PUSH_QUIET_HOURS_END).padStart(2, "0")}:00 Europe/Vienna`;
 }
-function isEnvFlagEnabled(value) {
-    if (!value) {
-        return false;
-    }
-    return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
-}
 function useStaticGeoSphereResponse() {
-    return isEnvFlagEnabled(process.env.HITZE_USE_STATIC_GEOSPHERE_RESPONSE);
+    return (0, env_1.isEnvFlagEnabled)(process.env.HITZE_USE_STATIC_GEOSPHERE_RESPONSE);
 }
 function getStaticGeoSphereUrl() {
     return asString(process.env.HITZE_STATIC_GEOSPHERE_URL);
@@ -643,7 +626,7 @@ function extractGeoSphereFeatures(payload) {
     }
     return null;
 }
-async function fetchGeoSphereWarnings(requestId, minWarningLevel) {
+async function fetchGeoSphereWarningsWithStats(requestId, minWarningLevel) {
     let payload;
     if (useStaticGeoSphereResponse()) {
         const staticUrl = getStaticGeoSphereUrl();
@@ -666,7 +649,11 @@ async function fetchGeoSphereWarnings(requestId, minWarningLevel) {
             result.push(normalized);
         }
     });
-    return result;
+    return { warnings: result, rawFeatureCount: features.length };
+}
+async function fetchGeoSphereWarnings(requestId, minWarningLevel) {
+    const { warnings } = await fetchGeoSphereWarningsWithStats(requestId, minWarningLevel);
+    return warnings;
 }
 function getFirebaseServiceAccountFromEnv() {
     const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -895,18 +882,6 @@ function pushContentForWarning(aggregate, timeWindow, languageCode, previousTime
     const timeWindowChangeText = timeWindowChanged
         ? buildTimeWindowChangeText(previousTimeWindow, timeWindow, languageCode)
         : "";
-    if (aggregate.kind === "cold") {
-        const bodyBase = localization.buildColdBody(name);
-        return {
-            title: localization.coldWarningTitle,
-            body: timeWindowChangeText
-                ? `${bodyBase} ${timeWindowChangeText}`
-                : timeWindowText
-                    ? `${bodyBase} ${timeWindowText}`
-                    : bodyBase,
-            collapsePrefix: "kaelte",
-        };
-    }
     const bodyBase = localization.buildHeatBody(name, aggregate.maxLevel);
     return {
         title: localization.heatWarningTitle,
@@ -972,21 +947,31 @@ async function sendTestPushNotifications(input) {
     if (municipalityIds.length === 0) {
         throw new AppError(400, "INVALID_INPUT", "At least one municipalityId is required.");
     }
+    const concurrency = getFcmSendConcurrency();
+    const results = await allSettledWithConcurrency(municipalityIds, concurrency, (municipalityId) => sendTestPushNotification({
+        municipalityId,
+        title: input.title,
+        body: input.body,
+        languageCode: input.languageCode,
+    }));
     const sent = [];
-    for (const municipalityId of municipalityIds) {
-        const result = await sendTestPushNotification({
+    const failed = [];
+    results.forEach((result, index) => {
+        const municipalityId = municipalityIds[index];
+        if (result.status === "fulfilled") {
+            sent.push({
+                municipalityId,
+                topic: result.value.topic,
+                messageId: result.value.messageId,
+            });
+            return;
+        }
+        failed.push({
             municipalityId,
-            title: input.title,
-            body: input.body,
-            languageCode: input.languageCode,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         });
-        sent.push({
-            municipalityId,
-            topic: result.topic,
-            messageId: result.messageId,
-        });
-    }
-    return { sent };
+    });
+    return { sent, failed };
 }
 async function sendTestPushToToken(input) {
     const token = input.token.trim();
@@ -1066,6 +1051,44 @@ function mapError(error) {
         return error;
     }
     return new AppError(500, "INTERNAL_ERROR", error instanceof Error ? error.message : "Unexpected error");
+}
+async function loadCurrentWarningsSnapshot() {
+    const requestId = (0, node_crypto_1.randomUUID)();
+    const minWarningLevel = getMinWarningLevel();
+    const isStatic = useStaticGeoSphereResponse();
+    const sourceUrl = isStatic ? getStaticGeoSphereUrl() ?? "" : GEOSPHERE_WARNSTATUS_URL;
+    const startedAt = Date.now();
+    const { warnings, rawFeatureCount } = await fetchGeoSphereWarningsWithStats(requestId, minWarningLevel);
+    const aggregates = aggregateWarnings(warnings);
+    const affectedMunicipalities = Array.from(aggregates.values())
+        .map((aggregate) => {
+        const window = aggregateTimeWindow(aggregate);
+        return {
+            municipalityId: aggregate.municipalityId,
+            name: municipalityDisplayName(aggregate.municipalityId, pushLocalization_1.DEFAULT_PUSH_LANGUAGE),
+            maxLevel: aggregate.maxLevel,
+            start: window.start ? window.start : null,
+            end: window.end ? window.end : null,
+            contributingWarningIds: Array.from(aggregate.warningIds).sort(),
+        };
+    })
+        .sort((a, b) => {
+        if (a.maxLevel !== b.maxLevel) {
+            return b.maxLevel - a.maxLevel;
+        }
+        return a.municipalityId.localeCompare(b.municipalityId);
+    });
+    return {
+        requestId,
+        fetchedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        source: isStatic ? "static" : "live",
+        sourceUrl,
+        minWarningLevel,
+        rawFeatureCount,
+        acceptedWarningCount: warnings.length,
+        affectedMunicipalities,
+    };
 }
 async function executeHitzeCron(method) {
     const startedAt = Date.now();
@@ -1246,6 +1269,21 @@ async function executeHitzeCron(method) {
             failedTargets,
             durationMs: Date.now() - startedAt,
         };
+        if (normalizedWarnings.length > 0 && sendCandidates.length > 0) {
+            await (0, pushover_1.sendPushoverReport)({
+                requestId,
+                processedWarnings: response.processedWarnings,
+                affectedMunicipalities: response.affectedMunicipalities,
+                sent: response.sent,
+                attempted: sendCandidates.length,
+                skippedRateLimited: response.skippedRateLimited,
+                skippedQuietHours: response.skippedQuietHours,
+                failed: response.failed,
+                failedMunicipalities: response.failedMunicipalities,
+                failedTargets: response.failedTargets,
+                durationMs: response.durationMs,
+            });
+        }
         return {
             status: 200,
             body: response,
