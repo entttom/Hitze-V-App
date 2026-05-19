@@ -834,10 +834,10 @@ function extractGeoSphereFeatures(payload: unknown): unknown[] | null {
   return null;
 }
 
-async function fetchGeoSphereWarnings(
+async function fetchGeoSphereWarningsWithStats(
   requestId: string,
   minWarningLevel: number
-): Promise<NormalizedWarning[]> {
+): Promise<{ warnings: NormalizedWarning[]; rawFeatureCount: number }> {
   let payload: unknown;
 
   if (useStaticGeoSphereResponse()) {
@@ -874,7 +874,15 @@ async function fetchGeoSphereWarnings(
     }
   });
 
-  return result;
+  return { warnings: result, rawFeatureCount: features.length };
+}
+
+async function fetchGeoSphereWarnings(
+  requestId: string,
+  minWarningLevel: number
+): Promise<NormalizedWarning[]> {
+  const { warnings } = await fetchGeoSphereWarningsWithStats(requestId, minWarningLevel);
+  return warnings;
 }
 
 interface FirebaseServiceAccount {
@@ -1454,6 +1462,75 @@ export {
   parseSupportedPushLanguage,
   type SupportedPushLanguage,
 };
+
+export interface CurrentWarningsSnapshotMunicipality {
+  municipalityId: string;
+  name: string;
+  maxLevel: number;
+  start: string | null;
+  end: string | null;
+  contributingWarningIds: string[];
+}
+
+export interface CurrentWarningsSnapshot {
+  requestId: string;
+  fetchedAt: string;
+  durationMs: number;
+  source: "live" | "static";
+  sourceUrl: string;
+  minWarningLevel: number;
+  rawFeatureCount: number;
+  acceptedWarningCount: number;
+  affectedMunicipalities: CurrentWarningsSnapshotMunicipality[];
+}
+
+export async function loadCurrentWarningsSnapshot(): Promise<CurrentWarningsSnapshot> {
+  const requestId = randomUUID();
+  const minWarningLevel = getMinWarningLevel();
+  const isStatic = useStaticGeoSphereResponse();
+  const sourceUrl = isStatic ? getStaticGeoSphereUrl() ?? "" : GEOSPHERE_WARNSTATUS_URL;
+  const startedAt = Date.now();
+
+  const { warnings, rawFeatureCount } = await fetchGeoSphereWarningsWithStats(
+    requestId,
+    minWarningLevel
+  );
+
+  const aggregates = aggregateWarnings(warnings);
+
+  const affectedMunicipalities: CurrentWarningsSnapshotMunicipality[] = Array.from(
+    aggregates.values()
+  )
+    .map((aggregate) => {
+      const window = aggregateTimeWindow(aggregate);
+      return {
+        municipalityId: aggregate.municipalityId,
+        name: municipalityDisplayName(aggregate.municipalityId, DEFAULT_PUSH_LANGUAGE),
+        maxLevel: aggregate.maxLevel,
+        start: window.start ? window.start : null,
+        end: window.end ? window.end : null,
+        contributingWarningIds: Array.from(aggregate.warningIds).sort(),
+      };
+    })
+    .sort((a, b) => {
+      if (a.maxLevel !== b.maxLevel) {
+        return b.maxLevel - a.maxLevel;
+      }
+      return a.municipalityId.localeCompare(b.municipalityId);
+    });
+
+  return {
+    requestId,
+    fetchedAt: new Date().toISOString(),
+    durationMs: Date.now() - startedAt,
+    source: isStatic ? "static" : "live",
+    sourceUrl,
+    minWarningLevel,
+    rawFeatureCount,
+    acceptedWarningCount: warnings.length,
+    affectedMunicipalities,
+  };
+}
 
 export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpResponse> {
   const startedAt = Date.now();
