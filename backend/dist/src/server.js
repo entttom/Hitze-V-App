@@ -56,6 +56,13 @@ function parseLanguageFromBody(rawValue) {
     }
     return { ok: true, value: parsed };
 }
+app.get("/", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Surrogate-Control", "no-store");
+    res.status(200).type("html").send(renderIndexPage(developMode));
+});
 app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true });
 });
@@ -75,6 +82,226 @@ app.post("/cron/hitze", async (req, res) => {
     }
     res.status(result.status).json(result.body);
 });
+const NAV_CSS = `
+      .topnav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 22px;
+      }
+
+      .topnav a {
+        display: inline-flex;
+        align-items: center;
+        padding: 8px 16px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--panel-strong);
+        color: var(--text);
+        font-size: 0.92rem;
+        font-weight: 600;
+        text-decoration: none;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+
+      .topnav a:hover {
+        background: #fff7e6;
+      }
+
+      .topnav a[aria-current="page"] {
+        background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+        border-color: transparent;
+        color: white;
+      }
+`;
+const NAV_LINKS = [
+    { href: "/", label: "← Übersicht" },
+    { href: "/test/push/ui", label: "Testversand" },
+    { href: "/test/warnings/ui", label: "Aktuelle Warnungen" },
+];
+function renderTopNav(activeHref) {
+    return `<nav class="topnav">${NAV_LINKS.map((link) => {
+        const aria = link.href === activeHref ? ' aria-current="page"' : "";
+        return `<a href="${link.href}"${aria}>${link.label}</a>`;
+    }).join("")}</nav>`;
+}
+function renderIndexPage(developMode) {
+    const developCards = developMode
+        ? `
+          <a class="card" href="/test/push/ui">
+            <h2>Testversand</h2>
+            <p>Manuelle Push-Notifications an einzelne oder mehrere Gemeinden senden — zum Testen von Titel, Text und Sprache.</p>
+            <span class="arrow">/test/push/ui →</span>
+          </a>
+
+          <a class="card" href="/test/warnings/ui">
+            <h2>Aktuelle Warnungen</h2>
+            <p>Live-Snapshot der GeoSphere-API: betroffene Gemeinden, Warnstufen, Zeiträume. Kein Push, kein Redis-Write.</p>
+            <span class="arrow">/test/warnings/ui →</span>
+          </a>`
+        : `
+          <div class="card card--info">
+            <h2>Develop-Seiten deaktiviert</h2>
+            <p>Testversand und Warnungs-Snapshot sind nur verfügbar, wenn beim Start <code>develop=true</code> (oder <code>DEVELOP=true</code>) gesetzt ist.</p>
+          </div>`;
+    return `<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hitze-V Backend</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4efe7;
+        --panel: #fffaf3;
+        --panel-strong: #fff4df;
+        --line: #d8cbb9;
+        --text: #2b241c;
+        --muted: #6e6255;
+        --accent: #c74b2a;
+        --accent-dark: #8f2f17;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(circle at top right, rgba(199, 75, 42, 0.15), transparent 30%),
+          linear-gradient(180deg, #f9f4ec 0%, var(--bg) 100%);
+        color: var(--text);
+        min-height: 100vh;
+      }
+
+      main {
+        max-width: 1160px;
+        margin: 0 auto;
+        padding: 32px 20px 40px;
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(2rem, 4vw, 3.4rem);
+        line-height: 0.95;
+        letter-spacing: -0.04em;
+      }
+
+      .subtitle {
+        margin: 0 0 28px;
+        color: var(--muted);
+        font-size: 1rem;
+      }
+
+      .mode-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        margin-left: 8px;
+      }
+
+      .mode-pill.on {
+        background: #edf8ee;
+        color: #2c6b3a;
+        border: 1px solid #8ac49a;
+      }
+
+      .mode-pill.off {
+        background: var(--panel-strong);
+        color: var(--muted);
+        border: 1px solid var(--line);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 16px;
+      }
+
+      .card {
+        display: block;
+        background: rgba(255, 250, 243, 0.94);
+        border: 1px solid rgba(216, 203, 185, 0.85);
+        border-radius: 24px;
+        box-shadow: 0 14px 40px rgba(82, 57, 30, 0.08);
+        padding: 22px;
+        text-decoration: none;
+        color: var(--text);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      a.card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 18px 48px rgba(82, 57, 30, 0.14);
+      }
+
+      .card h2 {
+        margin: 0 0 8px;
+        font-size: 1.2rem;
+      }
+
+      .card p {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .card .arrow {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.82rem;
+        color: var(--accent-dark);
+      }
+
+      .card--info {
+        background: var(--panel-strong);
+      }
+
+      .card--muted {
+        opacity: 0.95;
+      }
+
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.88em;
+        background: rgba(199, 75, 42, 0.08);
+        padding: 1px 6px;
+        border-radius: 6px;
+      }
+${NAV_CSS}
+    </style>
+  </head>
+  <body>
+    <main>
+      ${renderTopNav("/")}
+      <h1>Hitze-V Backend<span class="mode-pill ${developMode ? "on" : "off"}">${developMode ? "develop on" : "develop off"}</span></h1>
+      <p class="subtitle">Übersicht aller verfügbaren Oberflächen und Endpunkte.</p>
+
+      <div class="grid">
+${developCards}
+
+          <div class="card card--muted">
+            <h2>Health-Check</h2>
+            <p>JSON-Endpoint für Uptime-Monitoring.</p>
+            <span class="arrow"><a href="/health">GET /health →</a></span>
+          </div>
+
+          <div class="card card--muted">
+            <h2>Cron-Trigger</h2>
+            <p>Stündlicher Auslöser für die Hitze-Auswertung. <code>POST</code> mit <code>Authorization: Bearer &lt;CRON_SECRET&gt;</code>.</p>
+            <span class="arrow">POST /cron/hitze</span>
+          </div>
+      </div>
+    </main>
+  </body>
+</html>`;
+}
 function renderTestPushPage(municipalities, supportedLanguages, defaultLanguage) {
     const municipalityPayload = JSON.stringify(municipalities).replace(/</g, "\\u003c");
     const languagePayload = JSON.stringify(supportedLanguages).replace(/</g, "\\u003c");
@@ -284,12 +511,13 @@ function renderTestPushPage(municipalities, supportedLanguages, defaultLanguage)
           max-height: none;
         }
       }
+${NAV_CSS}
     </style>
   </head>
   <body>
     <main>
+      ${renderTopNav("/test/push/ui")}
       <h1>Hitze-V Testversand</h1>
-      <p><a href="/test/warnings/ui">→ Aktuelle Warnungen ansehen</a></p>
 
       <div class="layout">
         <section class="panel stack">
@@ -749,12 +977,14 @@ function renderWarningsPage() {
           text-align: left;
         }
       }
+${NAV_CSS}
     </style>
   </head>
   <body>
     <main>
+      ${renderTopNav("/test/warnings/ui")}
       <h1>Aktuelle Hitzewarnungen</h1>
-      <p>Live-Snapshot direkt aus der GeoSphere-API · keine Pushes, kein Redis-Write. <a href="/test/push/ui">→ Zum Testversand</a></p>
+      <p>Live-Snapshot direkt aus der GeoSphere-API · keine Pushes, kein Redis-Write.</p>
 
       <div class="toolbar">
         <button id="refreshButton" type="button">Aktualisieren</button>
