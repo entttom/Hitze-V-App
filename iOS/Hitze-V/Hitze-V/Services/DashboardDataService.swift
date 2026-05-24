@@ -58,11 +58,12 @@ final class DashboardDataService {
             
             let severity = highestHazardSeverity(for: targetDate, warnings: geoResult.warnings)
             let warningTimeRanges = warningTimeRanges(for: targetDate, warnings: geoResult.warnings)
+            let adjustedTempMax = minimumApparentTemperature(tempMax, for: severity)
             
             forecasts.append(DailyForecast(
                 date: targetDate,
                 severity: severity,
-                apparentTemperatureMax: tempMax,
+                apparentTemperatureMax: adjustedTempMax,
                 uvIndexMax: uvMax,
                 warningTimeRanges: warningTimeRanges
             ))
@@ -275,7 +276,7 @@ final class DashboardDataService {
                 return nil
             }
 
-            let level = resolvedWarningLevel(properties)
+            let level = normalizedHeatWarningLevel(resolvedWarningLevel(properties))
             return DailyHeatWarning(level: level, start: startDate, end: endDate)
         }
     }
@@ -313,6 +314,14 @@ final class DashboardDataService {
         return candidates.max() ?? 0
     }
 
+    private func normalizedHeatWarningLevel(_ geoSphereLevel: Int) -> Int {
+        guard geoSphereLevel > 0 else {
+            return 0
+        }
+
+        return geoSphereLevel + 1
+    }
+
     private func isHeatWarning(_ properties: GeoSphereWarningProperties) -> Bool {
         let typeCandidates = [
             properties.wtype,
@@ -337,6 +346,25 @@ final class DashboardDataService {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = viennaTimeZone
         return calendar
+    }
+
+    private func minimumApparentTemperature(_ value: Double?, for severity: HazardSeverity) -> Double? {
+        let minimumValue: Double
+        switch severity {
+        case .heatYellow:
+            minimumValue = 30.0
+        case .heatOrange:
+            minimumValue = 35.0
+        case .heatRed:
+            minimumValue = 40.0
+        case .none, .coldYellow, .coldOrange, .coldRed:
+            guard let value else {
+                return nil
+            }
+            return min(value, 29.0)
+        }
+
+        return max(value ?? minimumValue, minimumValue)
     }
 
     private func fetchOpenMeteo(for coordinate: CLLocationCoordinate2D) async throws -> OpenMeteoForecastResponse {

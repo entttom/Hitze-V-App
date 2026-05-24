@@ -28,6 +28,7 @@ class ExampleUnitTest {
             warnings = listOf(
                 DashboardDataService.GeoSphereWarning(
                     warningTypeId = 6,
+                    warningTypeCandidates = listOf(6),
                     warningLevel = 4,
                     warningTypeText = "Hitze",
                     start = "2026-07-10T08:00:00Z",
@@ -35,6 +36,7 @@ class ExampleUnitTest {
                 ),
                 DashboardDataService.GeoSphereWarning(
                     warningTypeId = 6,
+                    warningTypeCandidates = listOf(6),
                     warningLevel = 2,
                     warningTypeText = "Hitze",
                     start = "2026-07-11T08:00:00Z",
@@ -47,6 +49,27 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun highestHazardSeverity_mapsGeoSphereHeatLevelOneToAppWarningLevelTwo() {
+        val severity = DashboardDataService.highestHazardSeverity(
+            targetDate = LocalDate.parse("2026-05-25"),
+            warnings = listOf(
+                DashboardDataService.GeoSphereWarning(
+                    warningTypeId = 6,
+                    warningTypeCandidates = listOf(6),
+                    warningLevel = 1,
+                    warningTypeText = "Hitze",
+                    start = "2026-05-25T00:00:00Z",
+                    end = "2026-05-25T21:59:00Z"
+                )
+            )
+        )
+
+        assertEquals(HazardSeverity.HEAT_YELLOW, severity)
+        assertEquals(0, DashboardDataService.normalizeHeatWarningLevel(0))
+        assertEquals(2, DashboardDataService.normalizeHeatWarningLevel(1))
+    }
+
+    @Test
     fun warningTimeRangesForDate_clipsAndMergesRangesWithinTheDay() {
         val zoneId = ZoneId.of("Europe/Vienna")
         val targetDate = LocalDate.parse("2026-07-10")
@@ -56,6 +79,7 @@ class ExampleUnitTest {
             warnings = listOf(
                 DashboardDataService.GeoSphereWarning(
                     warningTypeId = 6,
+                    warningTypeCandidates = listOf(6),
                     warningLevel = 2,
                     warningTypeText = "Hitze",
                     start = "2026-07-09T22:00:00Z",
@@ -63,6 +87,7 @@ class ExampleUnitTest {
                 ),
                 DashboardDataService.GeoSphereWarning(
                     warningTypeId = 6,
+                    warningTypeCandidates = listOf(6),
                     warningLevel = 3,
                     warningTypeText = "Hitze",
                     start = "2026-07-10T07:30:00Z",
@@ -75,6 +100,49 @@ class ExampleUnitTest {
         assertEquals(1, ranges.size)
         assertEquals(targetDate.atStartOfDay(zoneId).toInstant(), ranges.first().start)
         assertTrue(ranges.first().end.isAfter(ranges.first().start))
+    }
+
+    @Test
+    fun minimumApparentTemperatureForSeverity_usesHeatWarningThresholds() {
+        assertEquals(
+            30.0,
+            DashboardDataService.minimumApparentTemperatureForSeverity(29.0, HazardSeverity.HEAT_YELLOW) ?: -1.0,
+            0.0
+        )
+        assertEquals(
+            35.0,
+            DashboardDataService.minimumApparentTemperatureForSeverity(32.0, HazardSeverity.HEAT_ORANGE) ?: -1.0,
+            0.0
+        )
+        assertEquals(
+            40.0,
+            DashboardDataService.minimumApparentTemperatureForSeverity(38.0, HazardSeverity.HEAT_RED) ?: -1.0,
+            0.0
+        )
+        assertEquals(
+            31.0,
+            DashboardDataService.minimumApparentTemperatureForSeverity(31.0, HazardSeverity.HEAT_YELLOW) ?: -1.0,
+            0.0
+        )
+        assertEquals(
+            29.0,
+            DashboardDataService.minimumApparentTemperatureForSeverity(29.0, HazardSeverity.NONE) ?: -1.0,
+            0.0
+        )
+        assertEquals(
+            29.0,
+            DashboardDataService.minimumApparentTemperatureForSeverity(31.0, HazardSeverity.NONE) ?: -1.0,
+            0.0
+        )
+        assertEquals(
+            null,
+            DashboardDataService.minimumApparentTemperatureForSeverity(null, HazardSeverity.NONE)
+        )
+        assertEquals(
+            30.0,
+            DashboardDataService.minimumApparentTemperatureForSeverity(null, HazardSeverity.HEAT_YELLOW) ?: -1.0,
+            0.0
+        )
     }
 
     @Test

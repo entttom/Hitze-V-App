@@ -53,7 +53,10 @@ class DashboardDataService(
             val severity = highestHazardSeverity(date, geoResult.warnings)
             val warningTimeRanges = warningTimeRangesForDate(date, geoResult.warnings)
             val uvIndex = meteoResult.daily.uvIndexMax.getOrNull(offset)
-            val apparentTemperature = meteoResult.daily.apparentTemperatureMax.getOrNull(offset)
+            val apparentTemperature = minimumApparentTemperatureForSeverity(
+                meteoResult.daily.apparentTemperatureMax.getOrNull(offset),
+                severity
+            )
 
             DailyForecast(
                 id = date.toString(),
@@ -296,6 +299,20 @@ class DashboardDataService(
                 }
         }
 
+        internal fun minimumApparentTemperatureForSeverity(
+            value: Double?,
+            severity: HazardSeverity
+        ): Double? {
+            val minimumValue = when (severity) {
+                HazardSeverity.HEAT_YELLOW -> 30.0
+                HazardSeverity.HEAT_ORANGE -> 35.0
+                HazardSeverity.HEAT_RED -> 40.0
+                else -> return value?.coerceAtMost(29.0)
+            }
+
+            return maxOf(value ?: minimumValue, minimumValue)
+        }
+
         private fun heatWarningsForDate(
             targetDate: LocalDate,
             warnings: List<GeoSphereWarning>,
@@ -318,12 +335,16 @@ class DashboardDataService(
                     null
                 } else {
                     DailyHeatWarning(
-                        level = warning.warningLevel,
+                        level = normalizeHeatWarningLevel(warning.warningLevel),
                         start = startDate,
                         end = endDate
                     )
                 }
             }
+        }
+
+        internal fun normalizeHeatWarningLevel(geoSphereLevel: Int): Int {
+            return if (geoSphereLevel > 0) geoSphereLevel + 1 else 0
         }
 
         private fun isHeatWarning(warning: GeoSphereWarning): Boolean {

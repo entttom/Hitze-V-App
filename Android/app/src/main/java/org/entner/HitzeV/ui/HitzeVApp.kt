@@ -126,6 +126,7 @@ import org.entner.HitzeV.model.AppLanguage
 import org.entner.HitzeV.model.AppTheme
 import org.entner.HitzeV.model.DailyForecast
 import org.entner.HitzeV.model.HazardSeverity
+import org.entner.HitzeV.model.WarningTimeRange
 import org.entner.HitzeV.model.Worksite
 import org.entner.HitzeV.model.WorksiteSnapshot
 import org.entner.HitzeV.ui.copy.Copybook
@@ -139,6 +140,7 @@ import org.entner.HitzeV.ui.theme.HitzeVTheme
 import org.entner.HitzeV.ui.theme.SkyBlue
 import org.entner.HitzeV.ui.theme.SurfaceDark
 import org.entner.HitzeV.ui.theme.SurfaceLight
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -898,7 +900,7 @@ private fun formatWarningTimeRanges(copy: Copybook, forecast: DailyForecast): St
     val endOfDay = forecast.date.plusDays(1).atStartOfDay(viennaZoneId).minusNanos(1).toInstant()
 
     return forecast.warningTimeRanges.joinToString(" · ") { range ->
-        if (range.start == startOfDay && range.end == endOfDay) {
+        if (isAllDayWarningRange(range, startOfDay, endOfDay)) {
             "${copy.warningAllDay}$levelSuffix"
         } else {
             val startText = warningTimeFormatter.format(range.start.atZone(viennaZoneId))
@@ -906,6 +908,15 @@ private fun formatWarningTimeRanges(copy: Copybook, forecast: DailyForecast): St
             "$startText-$endText$levelSuffix"
         }
     }
+}
+
+private fun isAllDayWarningRange(
+    range: WarningTimeRange,
+    startOfDay: Instant,
+    endOfDay: Instant
+): Boolean {
+    val endThreshold = endOfDay.minusSeconds(59)
+    return range.start == startOfDay && !range.end.isBefore(endThreshold)
 }
 
 @Composable

@@ -172,6 +172,14 @@ function getWarningLevel(properties: Record<string, unknown>): number | null {
   );
 }
 
+function normalizeWarningLevel(kind: WarningKind, geoSphereLevel: number): number {
+  if (kind !== "heat") {
+    return geoSphereLevel;
+  }
+
+  return geoSphereLevel > 0 ? geoSphereLevel + 1 : 0;
+}
+
 function getRawInfo(properties: Record<string, unknown>): Record<string, unknown> | null {
   return isRecord(properties.rawinfo)
     ? properties.rawinfo
@@ -326,8 +334,13 @@ function normalizeWarning(
     return null;
   }
 
-  const level = getWarningLevel(properties);
-  if (level === null || level < minWarningLevel) {
+  const geoSphereLevel = getWarningLevel(properties);
+  if (geoSphereLevel === null) {
+    return null;
+  }
+
+  const level = normalizeWarningLevel(kind, geoSphereLevel);
+  if (level < minWarningLevel) {
     return null;
   }
 
@@ -440,6 +453,28 @@ function formatPushTime(
   }).format(new Date(parsed));
 }
 
+function formatPushDate(
+  isoValue: string,
+  languageCode: SupportedPushLanguage
+): string {
+  if (!isoValue) {
+    return "";
+  }
+
+  const parsed = Date.parse(isoValue);
+  if (Number.isNaN(parsed)) {
+    return "";
+  }
+
+  const localization = pushLocalizationFor(languageCode);
+  return new Intl.DateTimeFormat(localization.localeTag, {
+    timeZone: "Europe/Vienna",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(parsed));
+}
+
 function formatPushClockTime(
   isoValue: string,
   languageCode: SupportedPushLanguage
@@ -460,6 +495,59 @@ function formatPushClockTime(
     minute: "2-digit",
     hour12: false,
   }).format(new Date(parsed));
+}
+
+function viennaDateTimeParts(
+  isoValue: string
+): { dayKey: string; hour: number; minute: number } | null {
+  if (!isoValue) {
+    return null;
+  }
+
+  const parsed = Date.parse(isoValue);
+  if (Number.isNaN(parsed)) {
+    return null;
+  }
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Vienna",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(parsed));
+
+  const partValue = (type: string): string | undefined =>
+    parts.find((part) => part.type === type)?.value;
+
+  const year = partValue("year");
+  const month = partValue("month");
+  const day = partValue("day");
+  const hour = Number(partValue("hour"));
+  const minute = Number(partValue("minute"));
+
+  if (!year || !month || !day || !Number.isInteger(hour) || !Number.isInteger(minute)) {
+    return null;
+  }
+
+  return {
+    dayKey: `${year}-${month}-${day}`,
+    hour,
+    minute,
+  };
+}
+
+function isAllDayTimeWindow(timeWindow: TimeWindow): boolean {
+  const start = viennaDateTimeParts(timeWindow.start);
+  const end = viennaDateTimeParts(timeWindow.end);
+
+  if (!start || !end) {
+    return false;
+  }
+
+  return start.hour === 0 && start.minute === 0 && end.hour === 23 && end.minute >= 59;
 }
 
 function dayKeyForIsoValue(isoValue: string): string {
@@ -489,6 +577,23 @@ function buildTimeWindowText(
   const endDayKey = dayKeyForIsoValue(timeWindow.end);
 
   if (startText && endText) {
+    if (isAllDayTimeWindow(timeWindow)) {
+      const startDateText = formatPushDate(timeWindow.start, languageCode);
+      const endDateText = formatPushDate(timeWindow.end, languageCode);
+
+      if (startDayKey === todayDayKey && endDayKey === todayDayKey) {
+        return localization.allDayLabel;
+      }
+
+      if (startDayKey === endDayKey && startDateText) {
+        return `${localization.allDayLabel}: ${startDateText}`;
+      }
+
+      if (startDateText && endDateText) {
+        return `${localization.allDayLabel}: ${startDateText} - ${endDateText}`;
+      }
+    }
+
     if (
       startClockText &&
       endClockText &&

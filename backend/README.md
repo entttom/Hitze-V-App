@@ -39,7 +39,7 @@ curl -X POST http://localhost:3000/test/push \
 
 Optional:
 
-- `HITZE_MIN_LEVEL` (default `2`)
+- `HITZE_MIN_LEVEL` (default `2`, based on Hitze-V levels; GeoSphere heat level `1` maps to Hitze-V warning level `2`)
 - `HITZE_USE_STATIC_GEOSPHERE_RESPONSE` (`true`/`1`/`yes`/`on` enables a static test payload instead of the GeoSphere API)
 - `HITZE_STATIC_GEOSPHERE_URL` (required when static test mode is enabled, for example `https://raw.githubusercontent.com/entttom/Hitze-V-App/main/backend/example_response.json`)
 - `CRON_SECRET`

@@ -65,6 +65,34 @@ const EN_LOCALIZATION: PushLocalizationTemplates = {
   manualTestTokenBody: "Direct test delivery to one device token.",
 };
 
+const ALL_DAY_LABELS: Record<SupportedPushLanguage, string> = {
+  bg: "Цял ден",
+  da: "Hele dagen",
+  de: "Ganztägig",
+  en: "All day",
+  et: "Kogu päev",
+  fi: "Koko päivä",
+  fr: "Toute la journée",
+  el: "Όλη την ημέρα",
+  ga: "An lá ar fad",
+  it: "Tutto il giorno",
+  hr: "Cijeli dan",
+  lv: "Visu dienu",
+  lt: "Visą dieną",
+  mt: "Il-ġurnata kollha",
+  nl: "De hele dag",
+  pl: "Cały dzień",
+  pt: "Todo o dia",
+  ro: "Toată ziua",
+  sv: "Hela dagen",
+  sk: "Celý deň",
+  sl: "Cel dan",
+  es: "Todo el día",
+  cs: "Celý den",
+  hu: "Egész nap",
+  tr: "Tüm gün",
+};
+
 const PUSH_LOCALIZATION: Record<SupportedPushLanguage, PushLocalizationTemplates> = {
   bg: {
     ...EN_LOCALIZATION,
@@ -517,6 +545,7 @@ export interface PushLocalization {
   languageCode: SupportedPushLanguage;
   localeTag: string;
   municipalityLabel: string;
+  allDayLabel: string;
   heatWarningTitle: string;
   buildHeatBody: (name: string, level: number) => string;
   formatTodayRange: (startClock: string, endClock: string) => string;
@@ -567,6 +596,7 @@ export function pushLocalizationFor(languageCode: SupportedPushLanguage): PushLo
     languageCode,
     localeTag: templates.localeTag,
     municipalityLabel: templates.municipalityLabel,
+    allDayLabel: ALL_DAY_LABELS[languageCode] ?? ALL_DAY_LABELS.en,
     heatWarningTitle: templates.heatWarningTitle,
     buildHeatBody: (name: string, level: number) =>
       formatTemplate(templates.heatBodyTemplate, { name, level }),

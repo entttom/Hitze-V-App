@@ -601,13 +601,18 @@ private struct WorksiteCard: View {
 
         return forecast.warningTimeRanges
             .map { range in
-                if range.start == startOfDay && range.end == endOfDay {
+                if isAllDayWarningRange(range, startOfDay: startOfDay, endOfDay: endOfDay) {
                     return "\(copy.warningAllDay)\(levelSuffix)"
                 }
 
                 return "\(Self.timeFormatter.string(from: range.start))-\(Self.timeFormatter.string(from: range.end))\(levelSuffix)"
             }
             .joined(separator: " · ")
+    }
+
+    private func isAllDayWarningRange(_ range: WarningTimeRange, startOfDay: Date, endOfDay: Date) -> Bool {
+        let endThreshold = endOfDay.addingTimeInterval(-59)
+        return range.start == startOfDay && range.end >= endThreshold
     }
 
     private static let timeFormatter: DateFormatter = {
