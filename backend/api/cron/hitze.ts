@@ -46,6 +46,7 @@ interface NormalizedWarning {
   municipalities: string[];
   start: string;
   end: string;
+  geometry: unknown;
 }
 
 interface MunicipalityAggregate {
@@ -361,6 +362,7 @@ function normalizeWarning(
     municipalities,
     start,
     end,
+    geometry: rawFeature.geometry,
   };
 }
 
@@ -1577,6 +1579,17 @@ export interface CurrentWarningsSnapshotMunicipality {
   contributingWarningIds: string[];
 }
 
+export interface CurrentWarningsSnapshotMapFeature {
+  id: string;
+  kind: WarningKind;
+  level: number;
+  start: string | null;
+  end: string | null;
+  municipalityCount: number;
+  municipalityIds: string[];
+  geometry: unknown;
+}
+
 export interface CurrentWarningsSnapshot {
   requestId: string;
   fetchedAt: string;
@@ -1587,6 +1600,7 @@ export interface CurrentWarningsSnapshot {
   rawFeatureCount: number;
   acceptedWarningCount: number;
   affectedMunicipalities: CurrentWarningsSnapshotMunicipality[];
+  mapFeatures: CurrentWarningsSnapshotMapFeature[];
 }
 
 export async function loadCurrentWarningsSnapshot(): Promise<CurrentWarningsSnapshot> {
@@ -1624,6 +1638,17 @@ export async function loadCurrentWarningsSnapshot(): Promise<CurrentWarningsSnap
       return a.municipalityId.localeCompare(b.municipalityId);
     });
 
+  const mapFeatures: CurrentWarningsSnapshotMapFeature[] = warnings.map((warning) => ({
+    id: warning.id,
+    kind: warning.kind,
+    level: warning.level,
+    start: warning.start ? warning.start : null,
+    end: warning.end ? warning.end : null,
+    municipalityCount: warning.municipalities.length,
+    municipalityIds: warning.municipalities,
+    geometry: warning.geometry,
+  }));
+
   return {
     requestId,
     fetchedAt: new Date().toISOString(),
@@ -1634,6 +1659,7 @@ export async function loadCurrentWarningsSnapshot(): Promise<CurrentWarningsSnap
     rawFeatureCount,
     acceptedWarningCount: warnings.length,
     affectedMunicipalities,
+    mapFeatures,
   };
 }
 

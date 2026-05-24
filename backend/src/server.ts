@@ -821,9 +821,11 @@ function renderWarningsPage(): string {
         --accent-dark: #8f2f17;
         --error-bg: #fff0ec;
         --error-line: #e0a090;
+        --level-0: #8abf78;
         --level-1: #f0d28a;
         --level-2: #e5933b;
         --level-3: #c74b2a;
+        --level-4: #7e2012;
       }
 
       * {
@@ -931,6 +933,225 @@ function renderWarningsPage(): string {
         word-break: break-word;
       }
 
+      .map-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        gap: 16px;
+        align-items: start;
+      }
+
+      .day-filter-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+
+      .day-filter {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 10px;
+        align-items: start;
+        padding: 12px 14px;
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        background: #fffdf9;
+        cursor: pointer;
+      }
+
+      .day-filter input {
+        width: 18px;
+        height: 18px;
+        margin: 2px 0 0;
+        accent-color: var(--accent);
+      }
+
+      .day-filter strong {
+        display: block;
+        color: var(--text);
+        margin-bottom: 2px;
+      }
+
+      .day-filter span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.86rem;
+        line-height: 1.35;
+      }
+
+      .map-summary {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+
+      .map-summary div {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--panel-strong);
+        padding: 11px 12px;
+      }
+
+      .map-summary strong {
+        display: block;
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+
+      .map-frame {
+        min-height: 430px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background:
+          radial-gradient(circle at 50% 48%, rgba(138, 191, 120, 0.28), transparent 58%),
+          linear-gradient(180deg, rgba(232, 247, 224, 0.94), rgba(250, 255, 247, 0.98));
+        overflow: hidden;
+        position: relative;
+      }
+
+      .map-frame svg {
+        display: block;
+        width: 100%;
+        height: auto;
+        min-height: 430px;
+      }
+
+      .map-empty {
+        min-height: 260px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        text-align: center;
+        padding: 24px;
+      }
+
+      .map-feature {
+        stroke: rgba(61, 43, 25, 0.48);
+        stroke-width: 1.1;
+        vector-effect: non-scaling-stroke;
+      }
+
+      .map-base {
+        fill: rgba(138, 191, 120, 0.2);
+        stroke: rgba(72, 118, 69, 0.48);
+        stroke-width: 1;
+        vector-effect: non-scaling-stroke;
+      }
+
+      .map-feature.level-2 {
+        fill: rgba(229, 147, 59, 0.76);
+      }
+
+      .map-feature.level-3 {
+        fill: rgba(199, 75, 42, 0.8);
+      }
+
+      .map-feature.level-4 {
+        fill: rgba(126, 32, 18, 0.86);
+      }
+
+      .map-feature:hover {
+        stroke: rgba(43, 36, 28, 0.9);
+        stroke-width: 2;
+      }
+
+      .map-side {
+        display: grid;
+        gap: 12px;
+      }
+
+      .map-note,
+      .legend {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--panel-strong);
+        padding: 12px 14px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .legend {
+        display: grid;
+        gap: 8px;
+      }
+
+      .legend-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text);
+      }
+
+      .legend-swatch {
+        width: 18px;
+        height: 18px;
+        border-radius: 5px;
+        border: 1px solid rgba(61, 43, 25, 0.35);
+      }
+
+      .legend-swatch.level-0 { background: var(--level-0); }
+      .legend-swatch.level-2 { background: var(--level-2); }
+      .legend-swatch.level-3 { background: var(--level-3); }
+      .legend-swatch.level-4 { background: var(--level-4); }
+
+      .map-feature-list {
+        display: grid;
+        gap: 8px;
+        max-height: 260px;
+        overflow: auto;
+      }
+
+      .district-list {
+        display: grid;
+        gap: 8px;
+        max-height: 220px;
+        overflow: auto;
+      }
+
+      .district-item {
+        display: grid;
+        grid-template-columns: 76px 1fr;
+        gap: 10px;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fffdf9;
+        padding: 9px 10px;
+        font-size: 0.86rem;
+      }
+
+      .map-feature-item {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fffdf9;
+        padding: 10px 12px;
+        font-size: 0.86rem;
+      }
+
+      .map-feature-item strong {
+        display: block;
+        color: var(--text);
+        margin-bottom: 3px;
+      }
+
+      .district-item strong {
+        display: block;
+        color: var(--text);
+        margin-bottom: 3px;
+      }
+
+      .map-feature-item span {
+        color: var(--muted);
+      }
+
+      .district-item span {
+        color: var(--muted);
+      }
+
       .municipality-list {
         display: grid;
         gap: 10px;
@@ -961,6 +1182,7 @@ function renderWarningsPage(): string {
 
       .badge.level-2 { background: var(--level-2); }
       .badge.level-3 { background: var(--level-3); }
+      .badge.level-4 { background: var(--level-4); }
 
       .municipality .title {
         font-weight: 700;
@@ -1012,6 +1234,10 @@ function renderWarningsPage(): string {
       }
 
       @media (max-width: 600px) {
+        .map-layout {
+          grid-template-columns: 1fr;
+        }
+
         .municipality {
           grid-template-columns: 50px 1fr;
         }
@@ -1042,6 +1268,26 @@ ${NAV_CSS}
       </section>
 
       <section class="panel">
+        <h2>Kartenansicht</h2>
+        <div id="dayFilters" class="day-filter-grid"></div>
+        <div id="mapSummary" class="map-summary"></div>
+        <div class="map-layout">
+          <div id="map" class="map-frame"></div>
+          <aside class="map-side">
+            <div class="legend">
+              <div class="legend-row"><span class="legend-swatch level-0"></span><span>Keine Hitzewarnung</span></div>
+              <div class="legend-row"><span class="legend-swatch level-2"></span><span>Stufe 2</span></div>
+              <div class="legend-row"><span class="legend-swatch level-3"></span><span>Stufe 3</span></div>
+              <div class="legend-row"><span class="legend-swatch level-4"></span><span>Stufe 4</span></div>
+            </div>
+            <div class="map-note">Grün ist die Kartenbasis ohne Hitzewarnung. Farbige Flächen sind die ausgewählten GeoSphere-Warnpolygone.</div>
+            <div id="districtSummary" class="district-list"></div>
+            <div id="mapFeatures" class="map-feature-list"></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="panel">
         <h2>Betroffene Gemeinden</h2>
         <div id="municipalities" class="municipality-list"></div>
       </section>
@@ -1053,11 +1299,30 @@ ${NAV_CSS}
       const errorEl = document.getElementById("error");
       const metaEl = document.getElementById("meta");
       const municipalitiesEl = document.getElementById("municipalities");
+      const dayFiltersEl = document.getElementById("dayFilters");
+      const mapSummaryEl = document.getElementById("mapSummary");
+      const mapEl = document.getElementById("map");
+      const districtSummaryEl = document.getElementById("districtSummary");
+      const mapFeaturesEl = document.getElementById("mapFeatures");
+      let currentSnapshot = null;
+      let selectedDayKeys = new Set();
 
       const timeFmt = new Intl.DateTimeFormat("de-AT", {
         timeZone: "Europe/Vienna",
         dateStyle: "short",
         timeStyle: "short",
+      });
+      const dayKeyFmt = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Europe/Vienna",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+      const dayLabelFmt = new Intl.DateTimeFormat("de-AT", {
+        timeZone: "Europe/Vienna",
+        weekday: "short",
+        day: "2-digit",
+        month: "2-digit",
       });
 
       function formatTime(iso) {
@@ -1065,6 +1330,87 @@ ${NAV_CSS}
         const date = new Date(iso);
         if (Number.isNaN(date.getTime())) return iso;
         return timeFmt.format(date);
+      }
+
+      function dayKey(date) {
+        const parts = dayKeyFmt.formatToParts(date);
+        const partValue = (type) => parts.find((part) => part.type === type)?.value;
+        const year = partValue("year");
+        const month = partValue("month");
+        const day = partValue("day");
+        return year && month && day ? year + "-" + month + "-" + day : "";
+      }
+
+      function parseDayKey(key) {
+        const parts = String(key).split("-").map(Number);
+        if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) {
+          return null;
+        }
+        return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
+      }
+
+      function addDays(date, days) {
+        const next = new Date(date);
+        next.setUTCDate(next.getUTCDate() + days);
+        return next;
+      }
+
+      function dayLabel(key) {
+        const parsed = parseDayKey(key);
+        if (!parsed) return key;
+        const today = parseDayKey(dayKey(new Date()));
+        const tomorrow = today ? addDays(today, 1) : null;
+
+        if (today && key === dayKey(today)) return "Heute";
+        if (tomorrow && key === dayKey(tomorrow)) return "Morgen";
+        return dayLabelFmt.format(parsed);
+      }
+
+      function featureDayKeys(feature) {
+        const start = feature.start ? new Date(feature.start) : null;
+        const end = feature.end ? new Date(feature.end) : null;
+        if (!start || Number.isNaN(start.getTime())) return [];
+
+        const startKey = dayKey(start);
+        const endKey = end && !Number.isNaN(end.getTime()) ? dayKey(end) : startKey;
+        const cursor = parseDayKey(startKey);
+        const last = parseDayKey(endKey);
+        if (!cursor || !last) return [startKey];
+
+        const keys = [];
+        for (let current = cursor; current <= last; current = addDays(current, 1)) {
+          keys.push(dayKey(current));
+        }
+        return keys;
+      }
+
+      function selectedFeatures(snapshot) {
+        const features = Array.isArray(snapshot.mapFeatures) ? snapshot.mapFeatures : [];
+        if (selectedDayKeys.size === 0) return [];
+
+        return features
+          .filter((feature) => featureDayKeys(feature).some((key) => selectedDayKeys.has(key)))
+          .sort((left, right) => {
+            const levelDelta = (Number(left.level) || 0) - (Number(right.level) || 0);
+            if (levelDelta !== 0) return levelDelta;
+            return String(left.start || "").localeCompare(String(right.start || ""));
+          });
+      }
+
+      function selectedMunicipalities(snapshot) {
+        const selectedIds = new Set(
+          selectedFeatures(snapshot).flatMap((feature) =>
+            Array.isArray(feature.municipalityIds) ? feature.municipalityIds : []
+          )
+        );
+
+        return snapshot.affectedMunicipalities.filter((municipality) =>
+          selectedIds.has(municipality.municipalityId)
+        );
+      }
+
+      function districtCode(municipalityId) {
+        return String(municipalityId || "").slice(0, 3);
       }
 
       function setError(message) {
@@ -1099,18 +1445,342 @@ ${NAV_CSS}
         }
       }
 
-      function renderMunicipalities(snapshot) {
-        municipalitiesEl.innerHTML = "";
+      function geometryRings(geometry) {
+        if (!geometry || !Array.isArray(geometry.coordinates)) return [];
 
-        if (snapshot.affectedMunicipalities.length === 0) {
+        if (geometry.type === "Polygon") {
+          return geometry.coordinates.filter((ring) => Array.isArray(ring) && ring.length > 2);
+        }
+
+        if (geometry.type === "MultiPolygon") {
+          return geometry.coordinates.flatMap((polygon) =>
+            Array.isArray(polygon)
+              ? polygon.filter((ring) => Array.isArray(ring) && ring.length > 2)
+              : []
+          );
+        }
+
+        return [];
+      }
+
+      function collectMapRings(features) {
+        const rings = [];
+        for (const feature of features) {
+          for (const ring of geometryRings(feature.geometry)) {
+            const points = ring
+              .map((point) => Array.isArray(point) && point.length >= 2
+                ? [Number(point[0]), Number(point[1])]
+                : null
+              )
+              .filter((point) => point && Number.isFinite(point[0]) && Number.isFinite(point[1]));
+
+            if (points.length > 2) {
+              rings.push({ feature, points });
+            }
+          }
+        }
+        return rings;
+      }
+
+      function summarizeFeatures(features) {
+        const municipalityIds = new Set();
+        const districtCodes = new Set();
+        let maxLevel = 0;
+
+        for (const feature of features) {
+          maxLevel = Math.max(maxLevel, Number(feature.level) || 0);
+          for (const municipalityId of Array.isArray(feature.municipalityIds) ? feature.municipalityIds : []) {
+            municipalityIds.add(municipalityId);
+            const code = districtCode(municipalityId);
+            if (code) districtCodes.add(code);
+          }
+        }
+
+        return {
+          warnings: features.length,
+          municipalities: municipalityIds.size,
+          districts: districtCodes.size,
+          maxLevel,
+        };
+      }
+
+      function availableDayKeys(snapshot) {
+        const keys = new Set();
+        const features = Array.isArray(snapshot.mapFeatures) ? snapshot.mapFeatures : [];
+        for (const feature of features) {
+          for (const key of featureDayKeys(feature)) {
+            keys.add(key);
+          }
+        }
+        return Array.from(keys).sort();
+      }
+
+      function featuresForDay(snapshot, key) {
+        const features = Array.isArray(snapshot.mapFeatures) ? snapshot.mapFeatures : [];
+        return features.filter((feature) => featureDayKeys(feature).includes(key));
+      }
+
+      function renderDayFilters(snapshot) {
+        const keys = availableDayKeys(snapshot);
+        dayFiltersEl.innerHTML = "";
+
+        if (keys.length === 0) {
           const empty = document.createElement("div");
           empty.className = "empty";
-          empty.textContent = "Aktuell keine Hitzewarnungen über Stufe " + snapshot.minWarningLevel + ".";
+          empty.textContent = "Keine Tage mit Hitzewarnungen im aktuellen Snapshot.";
+          dayFiltersEl.appendChild(empty);
+          return;
+        }
+
+        const stillSelected = keys.filter((key) => selectedDayKeys.has(key));
+        if (selectedDayKeys.size === 0 || stillSelected.length === 0) {
+          selectedDayKeys = new Set(keys);
+        } else if (stillSelected.length !== selectedDayKeys.size) {
+          selectedDayKeys = new Set(stillSelected);
+        }
+
+        for (const key of keys) {
+          const features = featuresForDay(snapshot, key);
+          const summary = summarizeFeatures(features);
+          const label = document.createElement("label");
+          label.className = "day-filter";
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.value = key;
+          checkbox.checked = selectedDayKeys.has(key);
+
+          const body = document.createElement("div");
+          const title = document.createElement("strong");
+          title.textContent = dayLabel(key);
+          const details = document.createElement("span");
+          details.textContent =
+            summary.warnings + " Warnung(en) · " +
+            summary.municipalities + " Gemeinde(n) · " +
+            summary.districts + " Bezirk(e)";
+
+          body.appendChild(title);
+          body.appendChild(details);
+          label.appendChild(checkbox);
+          label.appendChild(body);
+          dayFiltersEl.appendChild(label);
+        }
+      }
+
+      function renderMapSummary(snapshot) {
+        const features = selectedFeatures(snapshot);
+        const summary = summarizeFeatures(features);
+        const entries = [
+          ["Ausgewählte Tage", String(selectedDayKeys.size)],
+          ["Warnungen", String(summary.warnings)],
+          ["Gemeinden", String(summary.municipalities)],
+          ["Bezirke", String(summary.districts)],
+          ["Max. Stufe", summary.maxLevel > 0 ? "Stufe " + summary.maxLevel : "Keine"],
+        ];
+
+        mapSummaryEl.innerHTML = "";
+        for (const [label, value] of entries) {
+          const cell = document.createElement("div");
+          const lbl = document.createElement("strong");
+          lbl.textContent = label;
+          const val = document.createElement("span");
+          val.textContent = value;
+          cell.appendChild(lbl);
+          cell.appendChild(val);
+          mapSummaryEl.appendChild(cell);
+        }
+      }
+
+      function renderDistrictSummary(snapshot) {
+        const districts = new Map();
+        for (const feature of selectedFeatures(snapshot)) {
+          const warningIds = new Set([feature.id]);
+          for (const municipalityId of Array.isArray(feature.municipalityIds) ? feature.municipalityIds : []) {
+            const code = districtCode(municipalityId);
+            if (!code) continue;
+
+            const existing = districts.get(code) || {
+              code,
+              municipalityIds: new Set(),
+              warningIds: new Set(),
+              maxLevel: 0,
+            };
+            existing.municipalityIds.add(municipalityId);
+            for (const warningId of warningIds) {
+              existing.warningIds.add(warningId);
+            }
+            existing.maxLevel = Math.max(existing.maxLevel, Number(feature.level) || 0);
+            districts.set(code, existing);
+          }
+        }
+
+        districtSummaryEl.innerHTML = "";
+
+        if (districts.size === 0) {
+          const empty = document.createElement("div");
+          empty.className = "map-feature-item";
+          empty.textContent = "Keine betroffenen Bezirke in der Tagesauswahl.";
+          districtSummaryEl.appendChild(empty);
+          return;
+        }
+
+        const rows = Array.from(districts.values()).sort((left, right) => {
+          if (right.maxLevel !== left.maxLevel) return right.maxLevel - left.maxLevel;
+          return left.code.localeCompare(right.code);
+        });
+
+        for (const district of rows) {
+          const item = document.createElement("div");
+          item.className = "district-item";
+          const badge = document.createElement("span");
+          badge.className = "badge level-" + district.maxLevel;
+          badge.textContent = "Stufe " + district.maxLevel;
+          const text = document.createElement("div");
+          const title = document.createElement("strong");
+          title.textContent = "Bezirk " + district.code;
+          const details = document.createElement("span");
+          details.textContent =
+            district.municipalityIds.size + " Gemeinde(n) · " +
+            district.warningIds.size + " Warnung(en)";
+          text.appendChild(title);
+          text.appendChild(details);
+          item.appendChild(badge);
+          item.appendChild(text);
+          districtSummaryEl.appendChild(item);
+        }
+      }
+
+      function renderMap(snapshot) {
+        const allFeatures = Array.isArray(snapshot.mapFeatures) ? snapshot.mapFeatures : [];
+        const features = selectedFeatures(snapshot);
+        const baseRings = collectMapRings(allFeatures);
+        const rings = collectMapRings(features);
+
+        mapEl.innerHTML = "";
+        mapFeaturesEl.innerHTML = "";
+
+        if (baseRings.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "map-empty";
+          empty.textContent = "Keine Warnpolygone im aktuellen Snapshot.";
+          mapEl.appendChild(empty);
+          return;
+        }
+
+        const width = 1000;
+        const height = 620;
+        const padding = 32;
+        const austriaBounds = {
+          minX: 100000,
+          maxX: 690000,
+          minY: 250000,
+          maxY: 580000,
+        };
+        const minX = austriaBounds.minX;
+        const maxX = austriaBounds.maxX;
+        const minY = austriaBounds.minY;
+        const maxY = austriaBounds.maxY;
+        const scale = Math.min(
+          (width - padding * 2) / Math.max(1, maxX - minX),
+          (height - padding * 2) / Math.max(1, maxY - minY)
+        );
+        const usedWidth = (maxX - minX) * scale;
+        const usedHeight = (maxY - minY) * scale;
+        const offsetX = (width - usedWidth) / 2;
+        const offsetY = (height - usedHeight) / 2;
+
+        const project = ([x, y]) => [
+          offsetX + (x - minX) * scale,
+          height - (offsetY + (y - minY) * scale),
+        ];
+
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+        svg.setAttribute("role", "img");
+        svg.setAttribute("aria-label", "Karte der aktuellen Hitzewarnungen in Österreich");
+
+        const basePath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        basePath.setAttribute("class", "map-base");
+        basePath.setAttribute(
+          "d",
+          baseRings
+            .map((ring) =>
+              ring.points
+                .map(project)
+                .map(([x, y], index) => (index === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1))
+                .join(" ") + " Z"
+            )
+            .join(" ")
+        );
+        const baseTitle = document.createElementNS("http://www.w3.org/2000/svg", "title");
+        baseTitle.textContent = "Keine Hitzewarnung in nicht farbig überlagerten Bereichen";
+        basePath.appendChild(baseTitle);
+        svg.appendChild(basePath);
+
+        const byFeature = new Map();
+        for (const ring of rings) {
+          const entry = byFeature.get(ring.feature.id) || { feature: ring.feature, paths: [] };
+          const projected = ring.points.map(project);
+          entry.paths.push(projected.map(([x, y], index) =>
+            (index === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1)
+          ).join(" ") + " Z");
+          byFeature.set(ring.feature.id, entry);
+        }
+
+        for (const entry of byFeature.values()) {
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("class", "map-feature level-" + entry.feature.level);
+          path.setAttribute("d", entry.paths.join(" "));
+
+          const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+          title.textContent =
+            entry.feature.id +
+            " · Stufe " + entry.feature.level +
+            " · " + entry.feature.municipalityCount + " Gemeinde(n)" +
+            " · " + formatTime(entry.feature.start) + " → " + formatTime(entry.feature.end);
+          path.appendChild(title);
+          svg.appendChild(path);
+        }
+
+        mapEl.appendChild(svg);
+
+        if (features.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "map-feature-item";
+          empty.textContent = "Keine Warnungen in der aktuellen Tagesauswahl.";
+          mapFeaturesEl.appendChild(empty);
+          return;
+        }
+
+        for (const feature of features) {
+          const item = document.createElement("div");
+          item.className = "map-feature-item";
+          const title = document.createElement("strong");
+          title.textContent = feature.id + " · Stufe " + feature.level;
+          const meta = document.createElement("span");
+          meta.textContent =
+            feature.municipalityCount + " Gemeinde(n) · " +
+            formatTime(feature.start) + " → " + formatTime(feature.end);
+          item.appendChild(title);
+          item.appendChild(meta);
+          mapFeaturesEl.appendChild(item);
+        }
+      }
+
+      function renderMunicipalities(snapshot) {
+        municipalitiesEl.innerHTML = "";
+        const municipalities = selectedMunicipalities(snapshot);
+
+        if (municipalities.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = selectedDayKeys.size === 0
+            ? "Keine Tage ausgewählt."
+            : "Keine Hitzewarnungen in der aktuellen Tagesauswahl.";
           municipalitiesEl.appendChild(empty);
           return;
         }
 
-        for (const m of snapshot.affectedMunicipalities) {
+        for (const m of municipalities) {
           const row = document.createElement("div");
           row.className = "municipality";
 
@@ -1170,7 +1840,12 @@ ${NAV_CSS}
           }
 
           setError("");
+          currentSnapshot = result;
           renderMeta(result);
+          renderDayFilters(result);
+          renderMapSummary(result);
+          renderDistrictSummary(result);
+          renderMap(result);
           renderMunicipalities(result);
           statusEl.textContent =
             "Zuletzt geladen: " + formatTime(result.fetchedAt) + " · Dauer: " + result.durationMs + " ms";
@@ -1184,6 +1859,24 @@ ${NAV_CSS}
 
       refreshButton.addEventListener("click", () => {
         void loadSnapshot();
+      });
+
+      dayFiltersEl.addEventListener("change", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement) || target.type !== "checkbox" || !currentSnapshot) {
+          return;
+        }
+
+        if (target.checked) {
+          selectedDayKeys.add(target.value);
+        } else {
+          selectedDayKeys.delete(target.value);
+        }
+
+        renderMapSummary(currentSnapshot);
+        renderDistrictSummary(currentSnapshot);
+        renderMap(currentSnapshot);
+        renderMunicipalities(currentSnapshot);
       });
 
       void loadSnapshot();

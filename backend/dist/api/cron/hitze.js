@@ -277,6 +277,7 @@ function normalizeWarning(rawFeature, index, minWarningLevel) {
         municipalities,
         start,
         end,
+        geometry: rawFeature.geometry,
     };
 }
 function aggregateWarnings(warnings) {
@@ -1157,6 +1158,16 @@ async function loadCurrentWarningsSnapshot() {
         }
         return a.municipalityId.localeCompare(b.municipalityId);
     });
+    const mapFeatures = warnings.map((warning) => ({
+        id: warning.id,
+        kind: warning.kind,
+        level: warning.level,
+        start: warning.start ? warning.start : null,
+        end: warning.end ? warning.end : null,
+        municipalityCount: warning.municipalities.length,
+        municipalityIds: warning.municipalities,
+        geometry: warning.geometry,
+    }));
     return {
         requestId,
         fetchedAt: new Date().toISOString(),
@@ -1167,6 +1178,7 @@ async function loadCurrentWarningsSnapshot() {
         rawFeatureCount,
         acceptedWarningCount: warnings.length,
         affectedMunicipalities,
+        mapFeatures,
     };
 }
 async function executeHitzeCron(method) {
