@@ -3,6 +3,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+const node_fs_1 = require("node:fs");
+const node_path_1 = __importDefault(require("node:path"));
 const express_1 = __importDefault(require("express"));
 const env_1 = require("../api/cron/env");
 const pushover_1 = require("../api/cron/pushover");
@@ -12,6 +14,10 @@ app.use(express_1.default.json());
 const port = Number(process.env.PORT ?? "3000");
 const cronSecret = process.env.CRON_SECRET?.trim();
 const developMode = (0, env_1.isEnvFlagEnabled)(process.env.develop) || (0, env_1.isEnvFlagEnabled)(process.env.DEVELOP);
+const POLITICAL_DISTRICTS_GEOJSON_FILE = "political-districts-20260101.geojson";
+const MUNICIPALITIES_GEOJSON_FILE = "municipalities-20260101.geojson";
+let cachedPoliticalDistrictFeatures = null;
+let cachedMunicipalityFeatures = null;
 if (!cronSecret) {
     console.error([
         "",
@@ -38,6 +44,74 @@ if (!cronSecret) {
 function isAuthorized(req) {
     const header = req.header("authorization") ?? "";
     return header === `Bearer ${cronSecret}`;
+}
+function mapGeoJsonPaths(fileName) {
+    return [
+        node_path_1.default.resolve(__dirname, "..", "assets", fileName),
+        node_path_1.default.resolve(process.cwd(), "dist", "assets", fileName),
+        node_path_1.default.resolve(process.cwd(), "assets", fileName),
+    ];
+}
+function loadMapFeatures(fileName, cacheName) {
+    const cached = cacheName === "districts" ? cachedPoliticalDistrictFeatures : cachedMunicipalityFeatures;
+    if (cached) {
+        return cached;
+    }
+    for (const filePath of mapGeoJsonPaths(fileName)) {
+        if (!(0, node_fs_1.existsSync)(filePath)) {
+            continue;
+        }
+        try {
+            const payload = JSON.parse((0, node_fs_1.readFileSync)(filePath, "utf8"));
+            const features = payload &&
+                typeof payload === "object" &&
+                Array.isArray(payload.features)
+                ? payload.features
+                : [];
+            const parsedFeatures = [];
+            for (const feature of features) {
+                if (!feature || typeof feature !== "object") {
+                    continue;
+                }
+                const record = feature;
+                const id = String(record.properties?.id ?? record.properties?.districtId ?? record.id ?? "").trim();
+                const name = String(record.properties?.name ?? "").trim();
+                if (!id || !name || !record.geometry) {
+                    continue;
+                }
+                parsedFeatures.push({
+                    id,
+                    name,
+                    geometry: record.geometry,
+                });
+            }
+            if (cacheName === "districts") {
+                cachedPoliticalDistrictFeatures = parsedFeatures;
+            }
+            else {
+                cachedMunicipalityFeatures = parsedFeatures;
+            }
+            return parsedFeatures;
+        }
+        catch (error) {
+            console.warn(`${cacheName}_geojson_load_failed`, {
+                filePath,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+    if (cacheName === "districts") {
+        cachedPoliticalDistrictFeatures = [];
+        return cachedPoliticalDistrictFeatures;
+    }
+    cachedMunicipalityFeatures = [];
+    return cachedMunicipalityFeatures;
+}
+function loadPoliticalDistrictFeatures() {
+    return loadMapFeatures(POLITICAL_DISTRICTS_GEOJSON_FILE, "districts");
+}
+function loadMunicipalityFeatures() {
+    return loadMapFeatures(MUNICIPALITIES_GEOJSON_FILE, "municipalities");
 }
 function parseLanguageFromBody(rawValue) {
     if (rawValue === undefined || rawValue === null) {
@@ -118,6 +192,7 @@ const NAV_LINKS = [
     { href: "/", label: "← Übersicht" },
     { href: "/test/push/ui", label: "Testversand" },
     { href: "/test/warnings/ui", label: "Aktuelle Warnungen" },
+    { href: "/test/pushover/ui", label: "Pushover" },
 ];
 function renderTopNav(activeHref) {
     return `<nav class="topnav">${NAV_LINKS.map((link) => {
@@ -138,6 +213,12 @@ function renderIndexPage(developMode) {
             <h2>Aktuelle Warnungen</h2>
             <p>Live-Snapshot der GeoSphere-API: betroffene Gemeinden, Warnstufen, Zeiträume. Kein Push, kein Redis-Write.</p>
             <span class="arrow">/test/warnings/ui →</span>
+          </a>
+
+          <a class="card" href="/test/pushover/ui">
+            <h2>Pushover-Reports</h2>
+            <p>Backend-Reports für versendete Hitzewarnungen anzeigen und ein- oder ausschalten.</p>
+            <span class="arrow">/test/pushover/ui →</span>
           </a>`
         : `
           <div class="card card--info">
@@ -299,6 +380,341 @@ ${developCards}
           </div>
       </div>
     </main>
+  </body>
+</html>`;
+}
+function renderPushoverSettingsPage() {
+    return `<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hitze-V · Pushover</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4efe7;
+        --panel: #fffaf3;
+        --panel-strong: #fff4df;
+        --line: #d8cbb9;
+        --text: #2b241c;
+        --muted: #6e6255;
+        --accent: #c74b2a;
+        --accent-dark: #8f2f17;
+        --ok: #2c6b3a;
+        --danger: #8f2f17;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        background: linear-gradient(180deg, #f9f4ec 0%, var(--bg) 100%);
+        color: var(--text);
+        min-height: 100vh;
+      }
+
+      main {
+        max-width: 820px;
+        margin: 0 auto;
+        padding: 32px 20px 40px;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: clamp(2rem, 4vw, 3rem);
+        line-height: 1;
+      }
+
+      .subtitle {
+        margin: 0 0 24px;
+        color: var(--muted);
+      }
+
+      .panel {
+        background: rgba(255, 250, 243, 0.96);
+        border: 1px solid rgba(216, 203, 185, 0.9);
+        border-radius: 22px;
+        box-shadow: 0 14px 40px rgba(82, 57, 30, 0.08);
+        padding: 22px;
+      }
+
+      .status-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 12px;
+        margin: 18px 0;
+      }
+
+      .status-item {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: #fffdf9;
+        padding: 14px;
+      }
+
+      .status-item span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.8rem;
+        margin-bottom: 4px;
+      }
+
+      .status-item strong {
+        font-size: 1rem;
+      }
+
+      .switch-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        border-top: 1px solid var(--line);
+        padding-top: 18px;
+        margin-top: 18px;
+      }
+
+      .switch-copy strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .switch-copy span,
+      .message {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .toggle {
+        position: relative;
+        display: inline-flex;
+        width: 66px;
+        height: 38px;
+        flex: 0 0 auto;
+      }
+
+      .toggle input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+
+      .slider {
+        position: absolute;
+        cursor: pointer;
+        inset: 0;
+        background: #d8cbb9;
+        border-radius: 999px;
+        transition: background 0.18s ease;
+      }
+
+      .slider:before {
+        content: "";
+        position: absolute;
+        height: 30px;
+        width: 30px;
+        left: 4px;
+        bottom: 4px;
+        background: white;
+        border-radius: 50%;
+        box-shadow: 0 3px 10px rgba(52, 38, 22, 0.25);
+        transition: transform 0.18s ease;
+      }
+
+      .toggle input:checked + .slider {
+        background: var(--ok);
+      }
+
+      .toggle input:checked + .slider:before {
+        transform: translateX(28px);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 5px 10px;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        font-weight: 700;
+        background: var(--panel-strong);
+        border: 1px solid var(--line);
+      }
+
+      .badge.on {
+        background: #edf8ee;
+        border-color: #8ac49a;
+        color: var(--ok);
+      }
+
+      .badge.off {
+        background: #fff1e9;
+        border-color: #e1a185;
+        color: var(--danger);
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 14px;
+        background: var(--panel-strong);
+        color: var(--text);
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #fff7e6;
+      }
+
+      button:disabled,
+      .toggle input:disabled + .slider {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .message.error {
+        color: var(--danger);
+      }
+
+${NAV_CSS}
+    </style>
+  </head>
+  <body>
+    <main>
+      ${renderTopNav("/test/pushover/ui")}
+      <h1>Pushover-Reports</h1>
+      <p class="subtitle">Steuert nur die Pushover-Zusammenfassung nach versendeten Hitzewarnungen. Die Firebase-Pushes an App-Nutzer bleiben unverändert aktiv.</p>
+
+      <section class="panel">
+        <span id="stateBadge" class="badge">Status wird geladen</span>
+
+        <div class="status-grid">
+          <div class="status-item">
+            <span>Konfiguration</span>
+            <strong id="configuredValue">-</strong>
+          </div>
+          <div class="status-item">
+            <span>Speicherung</span>
+            <strong id="persistenceValue">-</strong>
+          </div>
+          <div class="status-item">
+            <span>Default</span>
+            <strong id="defaultValue">-</strong>
+          </div>
+        </div>
+
+        <div class="switch-row">
+          <div class="switch-copy">
+            <strong>Hitzewarnungs-Reports per Pushover senden</strong>
+            <span>Beim Ausschalten werden Cron-Läufe weiter ausgeführt, aber ohne Pushover-Report.</span>
+          </div>
+          <label class="toggle" aria-label="Pushover-Reports aktivieren">
+            <input id="enabledToggle" type="checkbox" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="actions">
+          <p id="message" class="message"></p>
+          <button id="reloadButton" type="button">Neu laden</button>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const stateBadge = document.getElementById("stateBadge");
+      const configuredValue = document.getElementById("configuredValue");
+      const persistenceValue = document.getElementById("persistenceValue");
+      const defaultValue = document.getElementById("defaultValue");
+      const enabledToggle = document.getElementById("enabledToggle");
+      const message = document.getElementById("message");
+      const reloadButton = document.getElementById("reloadButton");
+      let isApplyingRemoteState = false;
+
+      function label(value) {
+        return value ? "Ein" : "Aus";
+      }
+
+      function setMessage(text, isError = false) {
+        message.textContent = text || "";
+        message.classList.toggle("error", Boolean(isError));
+      }
+
+      function renderStatus(status) {
+        isApplyingRemoteState = true;
+        enabledToggle.checked = Boolean(status.enabled);
+        enabledToggle.disabled = !status.configured;
+        isApplyingRemoteState = false;
+
+        stateBadge.textContent = status.enabled ? "Aktiv" : "Deaktiviert";
+        stateBadge.className = "badge " + (status.enabled ? "on" : "off");
+        configuredValue.textContent = status.configured ? "PUSHOVER_* gesetzt" : "Nicht konfiguriert";
+        persistenceValue.textContent = status.persistence === "redis" ? "Redis" : "Prozessspeicher";
+        defaultValue.textContent = label(status.defaultEnabled);
+
+        if (!status.configured) {
+          setMessage("PUSHOVER_APP_TOKEN und PUSHOVER_USER_KEY fehlen. Einschalten ist erst nach der Konfiguration wirksam.", true);
+        } else {
+          setMessage(status.enabled ? "Pushover-Reports sind aktiv." : "Pushover-Reports sind deaktiviert.");
+        }
+      }
+
+      async function loadStatus() {
+        enabledToggle.disabled = true;
+        setMessage("Status wird geladen...");
+        try {
+          const response = await fetch("/test/pushover/status", { cache: "no-store" });
+          const status = await response.json();
+          if (!response.ok) {
+            throw new Error(status.message || "Status konnte nicht geladen werden.");
+          }
+          renderStatus(status);
+        } catch (error) {
+          setMessage(error instanceof Error ? error.message : String(error), true);
+        }
+      }
+
+      async function saveStatus(enabled) {
+        enabledToggle.disabled = true;
+        setMessage("Speichere...");
+        try {
+          const response = await fetch("/test/pushover/status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled }),
+          });
+          const status = await response.json();
+          if (!response.ok) {
+            throw new Error(status.message || "Status konnte nicht gespeichert werden.");
+          }
+          renderStatus(status);
+        } catch (error) {
+          setMessage(error instanceof Error ? error.message : String(error), true);
+          await loadStatus();
+        }
+      }
+
+      enabledToggle.addEventListener("change", () => {
+        if (isApplyingRemoteState) return;
+        void saveStatus(enabledToggle.checked);
+      });
+
+      reloadButton.addEventListener("click", () => {
+        void loadStatus();
+      });
+
+      void loadStatus();
+    </script>
   </body>
 </html>`;
 }
@@ -891,10 +1307,7 @@ function renderWarningsPage() {
       }
 
       .map-layout {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 300px;
-        gap: 16px;
-        align-items: start;
+        display: block;
       }
 
       .day-filter-grid {
@@ -959,6 +1372,36 @@ function renderWarningsPage() {
         margin-bottom: 4px;
       }
 
+      .map-controls {
+        display: contents;
+      }
+
+      .district-search {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #fffdf9;
+        color: var(--text);
+        font: inherit;
+        padding: 11px 16px;
+      }
+
+      .zoom-controls {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .icon-button {
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border-radius: 999px;
+        line-height: 1;
+        font-size: 1.05rem;
+        box-shadow: 0 8px 18px rgba(59, 42, 26, 0.18);
+      }
+
       .map-frame {
         min-height: 430px;
         border-radius: 18px;
@@ -968,13 +1411,75 @@ function renderWarningsPage() {
           linear-gradient(180deg, rgba(232, 247, 224, 0.94), rgba(250, 255, 247, 0.98));
         overflow: hidden;
         position: relative;
+        touch-action: none;
       }
 
-      .map-frame svg {
+      .map-canvas,
+      .map-canvas svg {
         display: block;
         width: 100%;
+      }
+
+      .map-canvas svg {
         height: auto;
         min-height: 430px;
+        cursor: grab;
+        user-select: none;
+      }
+
+      .map-frame.dragging svg {
+        cursor: grabbing;
+      }
+
+      .map-search-overlay {
+        position: absolute;
+        top: 14px;
+        left: 14px;
+        right: 82px;
+        z-index: 4;
+        max-width: 420px;
+        pointer-events: auto;
+      }
+
+      .map-zoom-overlay {
+        position: absolute;
+        top: 14px;
+        right: 14px;
+        z-index: 4;
+      }
+
+      .map-legend-overlay {
+        position: absolute;
+        left: 14px;
+        bottom: 14px;
+        z-index: 4;
+        max-width: 230px;
+        box-shadow: 0 8px 22px rgba(58, 42, 25, 0.14);
+      }
+
+      .map-hover {
+        position: absolute;
+        z-index: 5;
+        display: none;
+        max-width: 260px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fffdf9;
+        box-shadow: 0 10px 26px rgba(57, 40, 24, 0.2);
+        padding: 10px 12px;
+        pointer-events: none;
+        font-size: 0.86rem;
+      }
+
+      .map-hover strong {
+        display: block;
+        color: var(--text);
+        margin-bottom: 2px;
+      }
+
+      .map-hover span {
+        display: block;
+        color: var(--muted);
       }
 
       .map-empty {
@@ -992,28 +1497,52 @@ function renderWarningsPage() {
         vector-effect: non-scaling-stroke;
       }
 
-      .map-base {
-        fill: rgba(138, 191, 120, 0.2);
+      .map-district,
+      .map-municipality {
+        fill: rgba(138, 191, 120, 0.72);
         stroke: rgba(72, 118, 69, 0.48);
-        stroke-width: 1;
+        stroke-width: 0.7;
         vector-effect: non-scaling-stroke;
       }
 
+      .map-district.level-2,
+      .map-municipality.level-2,
       .map-feature.level-2 {
         fill: rgba(229, 147, 59, 0.76);
       }
 
+      .map-district.level-3,
+      .map-municipality.level-3,
       .map-feature.level-3 {
         fill: rgba(199, 75, 42, 0.8);
       }
 
+      .map-district.level-4,
+      .map-municipality.level-4,
       .map-feature.level-4 {
         fill: rgba(126, 32, 18, 0.86);
       }
 
+      .map-warning-outline {
+        fill: transparent;
+        stroke: rgba(45, 34, 21, 0.38);
+        stroke-width: 1.4;
+        pointer-events: none;
+        vector-effect: non-scaling-stroke;
+      }
+
+      .map-district:hover,
+      .map-municipality:hover,
       .map-feature:hover {
         stroke: rgba(43, 36, 28, 0.9);
-        stroke-width: 2;
+        stroke-width: 1.6;
+      }
+
+      .map-district.selected,
+      .map-municipality.selected {
+        stroke: rgba(35, 28, 20, 0.95);
+        stroke-width: 2.4;
+        filter: drop-shadow(0 4px 8px rgba(44, 34, 22, 0.26));
       }
 
       .map-side {
@@ -1191,6 +1720,24 @@ function renderWarningsPage() {
       }
 
       @media (max-width: 600px) {
+        .map-search-overlay {
+          top: 12px;
+          left: 12px;
+          right: 62px;
+        }
+
+        .map-zoom-overlay {
+          top: 12px;
+          right: 12px;
+        }
+
+        .map-legend-overlay {
+          left: 12px;
+          right: 12px;
+          bottom: 12px;
+          max-width: none;
+        }
+
         .map-layout {
           grid-template-columns: 1fr;
         }
@@ -1229,18 +1776,25 @@ ${NAV_CSS}
         <div id="dayFilters" class="day-filter-grid"></div>
         <div id="mapSummary" class="map-summary"></div>
         <div class="map-layout">
-          <div id="map" class="map-frame"></div>
-          <aside class="map-side">
-            <div class="legend">
+          <div id="map" class="map-frame">
+            <div id="mapCanvas" class="map-canvas"></div>
+            <div class="map-search-overlay">
+              <input id="districtSearch" class="district-search" list="districtOptions" type="search" placeholder="Gemeinde oder Bezirk suchen..." autocomplete="off" />
+              <datalist id="districtOptions"></datalist>
+            </div>
+            <div class="zoom-controls map-zoom-overlay" aria-label="Kartenzoom">
+              <button id="zoomInButton" class="icon-button" type="button" title="Hineinzoomen">+</button>
+              <button id="zoomOutButton" class="icon-button" type="button" title="Herauszoomen">−</button>
+              <button id="zoomResetButton" class="icon-button" type="button" title="Ansicht zurücksetzen">↺</button>
+            </div>
+            <div class="legend map-legend-overlay">
               <div class="legend-row"><span class="legend-swatch level-0"></span><span>Keine Hitzewarnung</span></div>
               <div class="legend-row"><span class="legend-swatch level-2"></span><span>Stufe 2</span></div>
               <div class="legend-row"><span class="legend-swatch level-3"></span><span>Stufe 3</span></div>
               <div class="legend-row"><span class="legend-swatch level-4"></span><span>Stufe 4</span></div>
             </div>
-            <div class="map-note">Grün ist die Kartenbasis ohne Hitzewarnung. Farbige Flächen sind die ausgewählten GeoSphere-Warnpolygone.</div>
-            <div id="districtSummary" class="district-list"></div>
-            <div id="mapFeatures" class="map-feature-list"></div>
-          </aside>
+            <div id="mapHover" class="map-hover"></div>
+          </div>
         </div>
       </section>
 
@@ -1259,10 +1813,21 @@ ${NAV_CSS}
       const dayFiltersEl = document.getElementById("dayFilters");
       const mapSummaryEl = document.getElementById("mapSummary");
       const mapEl = document.getElementById("map");
-      const districtSummaryEl = document.getElementById("districtSummary");
-      const mapFeaturesEl = document.getElementById("mapFeatures");
+      const mapCanvasEl = document.getElementById("mapCanvas");
+      const mapHoverEl = document.getElementById("mapHover");
+      const districtSearchEl = document.getElementById("districtSearch");
+      const districtOptionsEl = document.getElementById("districtOptions");
+      const zoomInButton = document.getElementById("zoomInButton");
+      const zoomOutButton = document.getElementById("zoomOutButton");
+      const zoomResetButton = document.getElementById("zoomResetButton");
       let currentSnapshot = null;
       let selectedDayKeys = new Set();
+      let selectedArea = null;
+      let mapSvgEl = null;
+      let currentViewBox = { x: 0, y: 0, width: 1000, height: 620 };
+      let districtBoundsById = new Map();
+      let municipalityBoundsById = new Map();
+      let dragState = null;
 
       const timeFmt = new Intl.DateTimeFormat("de-AT", {
         timeZone: "Europe/Vienna",
@@ -1368,6 +1933,334 @@ ${NAV_CSS}
 
       function districtCode(municipalityId) {
         return String(municipalityId || "").slice(0, 3);
+      }
+
+      function districtAggregates(snapshot) {
+        const districts = new Map();
+        for (const feature of selectedFeatures(snapshot)) {
+          for (const municipalityId of Array.isArray(feature.municipalityIds) ? feature.municipalityIds : []) {
+            const code = districtCode(municipalityId);
+            if (!code) continue;
+
+            const existing = districts.get(code) || {
+              code,
+              municipalityIds: new Set(),
+              warningIds: new Set(),
+              maxLevel: 0,
+            };
+            existing.municipalityIds.add(municipalityId);
+            existing.warningIds.add(feature.id);
+            existing.maxLevel = Math.max(existing.maxLevel, Number(feature.level) || 0);
+            districts.set(code, existing);
+          }
+        }
+        return districts;
+      }
+
+      function municipalityAggregates(snapshot) {
+        const municipalities = new Map();
+        for (const feature of selectedFeatures(snapshot)) {
+          for (const municipalityId of Array.isArray(feature.municipalityIds) ? feature.municipalityIds : []) {
+            const existing = municipalities.get(municipalityId) || {
+              municipalityId,
+              warningIds: new Set(),
+              maxLevel: 0,
+            };
+            existing.warningIds.add(feature.id);
+            existing.maxLevel = Math.max(existing.maxLevel, Number(feature.level) || 0);
+            municipalities.set(municipalityId, existing);
+          }
+        }
+        return municipalities;
+      }
+
+      function normalizeSearchText(value) {
+        return String(value || "")
+          .normalize("NFD")
+          .replace(/[\\u0300-\\u036f]/g, "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, " ")
+          .trim();
+      }
+
+      function districtLabel(district) {
+        return district.id + " · " + district.name;
+      }
+
+      function districtSearchHaystack(district) {
+        return normalizeSearchText(district.id + " " + district.name);
+      }
+
+      function areaLabel(area) {
+        return (area.kind === "municipality" ? "Gemeinde " : "Bezirk ") + area.id + " · " + area.name;
+      }
+
+      function areaSearchHaystack(area) {
+        return normalizeSearchText(area.kind + " " + area.id + " " + area.name);
+      }
+
+      function boundsForPoints(points) {
+        const xs = points.map((point) => point[0]);
+        const ys = points.map((point) => point[1]);
+        return {
+          minX: Math.min(...xs),
+          maxX: Math.max(...xs),
+          minY: Math.min(...ys),
+          maxY: Math.max(...ys),
+        };
+      }
+
+      function mergeBounds(left, right) {
+        if (!left) return right;
+        return {
+          minX: Math.min(left.minX, right.minX),
+          maxX: Math.max(left.maxX, right.maxX),
+          minY: Math.min(left.minY, right.minY),
+          maxY: Math.max(left.maxY, right.maxY),
+        };
+      }
+
+      function applyViewBox(viewBox) {
+        currentViewBox = {
+          x: Math.max(0, Math.min(1000 - viewBox.width, viewBox.x)),
+          y: Math.max(0, Math.min(620 - viewBox.height, viewBox.y)),
+          width: viewBox.width,
+          height: viewBox.height,
+        };
+        if (mapSvgEl) {
+          mapSvgEl.setAttribute(
+            "viewBox",
+            currentViewBox.x + " " + currentViewBox.y + " " + currentViewBox.width + " " + currentViewBox.height
+          );
+        }
+      }
+
+      function panMap(deltaClientX, deltaClientY, originViewBox, mapRect) {
+        if (!mapRect || mapRect.width <= 0 || mapRect.height <= 0) {
+          return;
+        }
+
+        const deltaX = deltaClientX * (originViewBox.width / mapRect.width);
+        const deltaY = deltaClientY * (originViewBox.height / mapRect.height);
+        applyViewBox({
+          x: originViewBox.x - deltaX,
+          y: originViewBox.y - deltaY,
+          width: originViewBox.width,
+          height: originViewBox.height,
+        });
+      }
+
+      function beginMapDrag(event) {
+        if (!mapSvgEl || event.button !== 0) {
+          return;
+        }
+
+        dragState = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          originViewBox: { ...currentViewBox },
+          mapRect: mapSvgEl.getBoundingClientRect(),
+        };
+        mapEl.classList.add("dragging");
+        mapSvgEl.setPointerCapture(event.pointerId);
+        event.preventDefault();
+      }
+
+      function updateMapDrag(event) {
+        if (!dragState || dragState.pointerId !== event.pointerId) {
+          return;
+        }
+
+        panMap(
+          event.clientX - dragState.startX,
+          event.clientY - dragState.startY,
+          dragState.originViewBox,
+          dragState.mapRect
+        );
+      }
+
+      function endMapDrag(event) {
+        if (!dragState || dragState.pointerId !== event.pointerId) {
+          return;
+        }
+
+        if (mapSvgEl && mapSvgEl.hasPointerCapture(event.pointerId)) {
+          mapSvgEl.releasePointerCapture(event.pointerId);
+        }
+        dragState = null;
+        mapEl.classList.remove("dragging");
+      }
+
+      function attachMapPanHandlers(svg) {
+        svg.addEventListener("pointerdown", beginMapDrag);
+        svg.addEventListener("pointermove", updateMapDrag);
+        svg.addEventListener("pointerup", endMapDrag);
+        svg.addEventListener("pointercancel", endMapDrag);
+        svg.addEventListener("wheel", (event) => {
+          event.preventDefault();
+          zoomMapAt(event.deltaY < 0 ? 0.82 : 1.18, event.clientX, event.clientY);
+        }, { passive: false });
+        svg.addEventListener("lostpointercapture", () => {
+          dragState = null;
+          mapEl.classList.remove("dragging");
+        });
+      }
+
+      function showMapHover(event, title, detail) {
+        mapHoverEl.innerHTML = "";
+        const strong = document.createElement("strong");
+        strong.textContent = title;
+        const span = document.createElement("span");
+        span.textContent = detail;
+        mapHoverEl.appendChild(strong);
+        mapHoverEl.appendChild(span);
+        mapHoverEl.style.display = "block";
+        moveMapHover(event);
+      }
+
+      function moveMapHover(event) {
+        if (mapHoverEl.style.display !== "block") return;
+        const rect = mapEl.getBoundingClientRect();
+        const maxX = Math.max(12, rect.width - 280);
+        const maxY = Math.max(12, rect.height - 80);
+        const x = Math.min(maxX, Math.max(12, event.clientX - rect.left + 14));
+        const y = Math.min(maxY, Math.max(12, event.clientY - rect.top + 14));
+        mapHoverEl.style.left = x + "px";
+        mapHoverEl.style.top = y + "px";
+      }
+
+      function hideMapHover() {
+        mapHoverEl.style.display = "none";
+      }
+
+      function resetMapView() {
+        selectedArea = null;
+        districtSearchEl.value = "";
+        applyViewBox({ x: 0, y: 0, width: 1000, height: 620 });
+        mapCanvasEl.querySelectorAll(".selected").forEach((node) => {
+          node.classList.remove("selected");
+        });
+      }
+
+      function zoomMap(factor) {
+        const nextWidth = Math.min(1000, Math.max(90, currentViewBox.width * factor));
+        const nextHeight = Math.min(620, Math.max(56, currentViewBox.height * factor));
+        const centerX = currentViewBox.x + currentViewBox.width / 2;
+        const centerY = currentViewBox.y + currentViewBox.height / 2;
+        applyViewBox({
+          x: Math.max(0, Math.min(1000 - nextWidth, centerX - nextWidth / 2)),
+          y: Math.max(0, Math.min(620 - nextHeight, centerY - nextHeight / 2)),
+          width: nextWidth,
+          height: nextHeight,
+        });
+      }
+
+      function zoomToBounds(bounds) {
+        const padding = 24;
+        const width = Math.max(70, bounds.maxX - bounds.minX + padding * 2);
+        const height = Math.max(44, bounds.maxY - bounds.minY + padding * 2);
+        const aspect = 1000 / 620;
+        let viewWidth = width;
+        let viewHeight = height;
+
+        if (viewWidth / viewHeight > aspect) {
+          viewHeight = viewWidth / aspect;
+        } else {
+          viewWidth = viewHeight * aspect;
+        }
+
+        viewWidth = Math.min(1000, viewWidth);
+        viewHeight = Math.min(620, viewHeight);
+        const centerX = (bounds.minX + bounds.maxX) / 2;
+        const centerY = (bounds.minY + bounds.maxY) / 2;
+
+        applyViewBox({
+          x: Math.max(0, Math.min(1000 - viewWidth, centerX - viewWidth / 2)),
+          y: Math.max(0, Math.min(620 - viewHeight, centerY - viewHeight / 2)),
+          width: viewWidth,
+          height: viewHeight,
+        });
+      }
+
+      function zoomMapAt(factor, clientX, clientY) {
+        if (!mapSvgEl) {
+          zoomMap(factor);
+          return;
+        }
+
+        const rect = mapSvgEl.getBoundingClientRect();
+        if (!rect || rect.width <= 0 || rect.height <= 0) {
+          zoomMap(factor);
+          return;
+        }
+
+        const pointerX = currentViewBox.x + ((clientX - rect.left) / rect.width) * currentViewBox.width;
+        const pointerY = currentViewBox.y + ((clientY - rect.top) / rect.height) * currentViewBox.height;
+        const nextWidth = Math.min(1000, Math.max(90, currentViewBox.width * factor));
+        const nextHeight = Math.min(620, Math.max(56, currentViewBox.height * factor));
+        const ratioX = (pointerX - currentViewBox.x) / currentViewBox.width;
+        const ratioY = (pointerY - currentViewBox.y) / currentViewBox.height;
+
+        applyViewBox({
+          x: pointerX - nextWidth * ratioX,
+          y: pointerY - nextHeight * ratioY,
+          width: nextWidth,
+          height: nextHeight,
+        });
+      }
+
+      function selectArea(area) {
+        selectedArea = area;
+        mapCanvasEl.querySelectorAll(".selected").forEach((node) => {
+          node.classList.remove("selected");
+        });
+
+        const attr = area.kind === "municipality" ? "data-municipality-id" : "data-district-id";
+        const selected = mapCanvasEl.querySelector("[" + attr + "='" + area.id + "']");
+        if (selected) {
+          selected.classList.add("selected");
+        }
+
+        const bounds = area.kind === "municipality"
+          ? municipalityBoundsById.get(area.id)
+          : districtBoundsById.get(area.id);
+        if (bounds) {
+          zoomToBounds(bounds);
+        }
+      }
+
+      function findAreaBySearchValue(value) {
+        if (!currentSnapshot) return null;
+        const query = normalizeSearchText(value);
+        if (!query) return null;
+
+        const municipalities = Array.isArray(currentSnapshot.municipalityFeatures)
+          ? currentSnapshot.municipalityFeatures.map((area) => ({ ...area, kind: "municipality" }))
+          : [];
+        const districts = Array.isArray(currentSnapshot.districtFeatures)
+          ? currentSnapshot.districtFeatures.map((area) => ({ ...area, kind: "district" }))
+          : [];
+        return [...municipalities, ...districts].find((area) => areaSearchHaystack(area).includes(query)) || null;
+      }
+
+      function renderDistrictSearchOptions(snapshot) {
+        districtOptionsEl.innerHTML = "";
+        const municipalities = Array.isArray(snapshot.municipalityFeatures)
+          ? snapshot.municipalityFeatures.map((area) => ({ ...area, kind: "municipality" }))
+          : [];
+        const districts = Array.isArray(snapshot.districtFeatures)
+          ? snapshot.districtFeatures.map((area) => ({ ...area, kind: "district" }))
+          : [];
+        const areas = [...municipalities, ...districts].sort((left, right) =>
+          areaLabel(left).localeCompare(areaLabel(right), "de-AT")
+        );
+
+        for (const area of areas) {
+          const option = document.createElement("option");
+          option.value = areaLabel(area);
+          districtOptionsEl.appendChild(option);
+        }
       }
 
       function setError(message) {
@@ -1547,79 +2440,31 @@ ${NAV_CSS}
         }
       }
 
-      function renderDistrictSummary(snapshot) {
-        const districts = new Map();
-        for (const feature of selectedFeatures(snapshot)) {
-          const warningIds = new Set([feature.id]);
-          for (const municipalityId of Array.isArray(feature.municipalityIds) ? feature.municipalityIds : []) {
-            const code = districtCode(municipalityId);
-            if (!code) continue;
-
-            const existing = districts.get(code) || {
-              code,
-              municipalityIds: new Set(),
-              warningIds: new Set(),
-              maxLevel: 0,
-            };
-            existing.municipalityIds.add(municipalityId);
-            for (const warningId of warningIds) {
-              existing.warningIds.add(warningId);
-            }
-            existing.maxLevel = Math.max(existing.maxLevel, Number(feature.level) || 0);
-            districts.set(code, existing);
-          }
-        }
-
-        districtSummaryEl.innerHTML = "";
-
-        if (districts.size === 0) {
-          const empty = document.createElement("div");
-          empty.className = "map-feature-item";
-          empty.textContent = "Keine betroffenen Bezirke in der Tagesauswahl.";
-          districtSummaryEl.appendChild(empty);
-          return;
-        }
-
-        const rows = Array.from(districts.values()).sort((left, right) => {
-          if (right.maxLevel !== left.maxLevel) return right.maxLevel - left.maxLevel;
-          return left.code.localeCompare(right.code);
-        });
-
-        for (const district of rows) {
-          const item = document.createElement("div");
-          item.className = "district-item";
-          const badge = document.createElement("span");
-          badge.className = "badge level-" + district.maxLevel;
-          badge.textContent = "Stufe " + district.maxLevel;
-          const text = document.createElement("div");
-          const title = document.createElement("strong");
-          title.textContent = "Bezirk " + district.code;
-          const details = document.createElement("span");
-          details.textContent =
-            district.municipalityIds.size + " Gemeinde(n) · " +
-            district.warningIds.size + " Warnung(en)";
-          text.appendChild(title);
-          text.appendChild(details);
-          item.appendChild(badge);
-          item.appendChild(text);
-          districtSummaryEl.appendChild(item);
-        }
-      }
-
       function renderMap(snapshot) {
+        const districtFeatures = Array.isArray(snapshot.districtFeatures) ? snapshot.districtFeatures : [];
+        const municipalityFeatures = Array.isArray(snapshot.municipalityFeatures) ? snapshot.municipalityFeatures : [];
         const allFeatures = Array.isArray(snapshot.mapFeatures) ? snapshot.mapFeatures : [];
         const features = selectedFeatures(snapshot);
-        const baseRings = collectMapRings(allFeatures);
+        const districtRings = collectMapRings(districtFeatures);
+        const municipalityRings = collectMapRings(municipalityFeatures);
+        const baseRings = municipalityRings.length > 0
+          ? municipalityRings
+          : districtRings.length > 0
+            ? districtRings
+            : collectMapRings(allFeatures);
         const rings = collectMapRings(features);
 
-        mapEl.innerHTML = "";
-        mapFeaturesEl.innerHTML = "";
+        mapCanvasEl.innerHTML = "";
+        hideMapHover();
+        mapSvgEl = null;
+        districtBoundsById = new Map();
+        municipalityBoundsById = new Map();
 
         if (baseRings.length === 0) {
           const empty = document.createElement("div");
           empty.className = "map-empty";
           empty.textContent = "Keine Warnpolygone im aktuellen Snapshot.";
-          mapEl.appendChild(empty);
+          mapCanvasEl.appendChild(empty);
           return;
         }
 
@@ -1654,24 +2499,118 @@ ${NAV_CSS}
         svg.setAttribute("viewBox", "0 0 " + width + " " + height);
         svg.setAttribute("role", "img");
         svg.setAttribute("aria-label", "Karte der aktuellen Hitzewarnungen in Österreich");
+        attachMapPanHandlers(svg);
 
-        const basePath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        basePath.setAttribute("class", "map-base");
-        basePath.setAttribute(
-          "d",
-          baseRings
-            .map((ring) =>
-              ring.points
-                .map(project)
-                .map(([x, y], index) => (index === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1))
-                .join(" ") + " Z"
-            )
-            .join(" ")
-        );
-        const baseTitle = document.createElementNS("http://www.w3.org/2000/svg", "title");
-        baseTitle.textContent = "Keine Hitzewarnung in nicht farbig überlagerten Bereichen";
-        basePath.appendChild(baseTitle);
-        svg.appendChild(basePath);
+        const districtLevels = districtAggregates(snapshot);
+        const municipalityLevels = municipalityAggregates(snapshot);
+
+        if (municipalityRings.length > 0) {
+          const byMunicipality = new Map();
+          for (const ring of municipalityRings) {
+            const municipality = ring.feature;
+            const entry = byMunicipality.get(municipality.id) || { municipality, paths: [], bounds: null };
+            const projected = ring.points.map(project);
+            entry.bounds = mergeBounds(entry.bounds, boundsForPoints(projected));
+            entry.paths.push(projected.map(([x, y], index) =>
+              (index === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1)
+            ).join(" ") + " Z");
+            byMunicipality.set(municipality.id, entry);
+          }
+
+          for (const entry of byMunicipality.values()) {
+            const aggregate = municipalityLevels.get(entry.municipality.id);
+            const level = aggregate ? aggregate.maxLevel : 0;
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("class", "map-municipality level-" + level);
+            path.setAttribute("d", entry.paths.join(" "));
+            path.setAttribute("data-municipality-id", entry.municipality.id);
+            path.setAttribute("tabindex", "0");
+            if (entry.bounds) {
+              municipalityBoundsById.set(entry.municipality.id, entry.bounds);
+            }
+
+            const detail = aggregate
+              ? "Stufe " + level + " · " + aggregate.warningIds.size + " Warnung(en)"
+              : "Keine Hitzewarnung";
+            const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+            title.textContent = entry.municipality.id + " · " + entry.municipality.name + " · " + detail;
+            path.appendChild(title);
+            path.addEventListener("mouseenter", (event) => {
+              showMapHover(event, entry.municipality.name, entry.municipality.id + " · " + detail);
+            });
+            path.addEventListener("mouseover", (event) => {
+              showMapHover(event, entry.municipality.name, entry.municipality.id + " · " + detail);
+            });
+            path.addEventListener("pointerenter", (event) => {
+              showMapHover(event, entry.municipality.name, entry.municipality.id + " · " + detail);
+            });
+            path.addEventListener("pointermove", moveMapHover);
+            path.addEventListener("pointerleave", hideMapHover);
+            path.addEventListener("mousemove", moveMapHover);
+            path.addEventListener("mouseleave", hideMapHover);
+            path.addEventListener("click", () => {
+              const area = { ...entry.municipality, kind: "municipality" };
+              districtSearchEl.value = areaLabel(area);
+              selectArea(area);
+            });
+            svg.appendChild(path);
+          }
+        } else if (districtRings.length > 0) {
+          const byDistrict = new Map();
+          for (const ring of districtRings) {
+            const district = ring.feature;
+            const entry = byDistrict.get(district.id) || { district, paths: [], bounds: null };
+            const projected = ring.points.map(project);
+            entry.bounds = mergeBounds(entry.bounds, boundsForPoints(projected));
+            entry.paths.push(projected.map(([x, y], index) =>
+              (index === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1)
+            ).join(" ") + " Z");
+            byDistrict.set(district.id, entry);
+          }
+
+          for (const entry of byDistrict.values()) {
+            const aggregate = districtLevels.get(entry.district.id);
+            const level = aggregate ? aggregate.maxLevel : 0;
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("class", "map-district level-" + level);
+            path.setAttribute("d", entry.paths.join(" "));
+            path.setAttribute("data-district-id", entry.district.id);
+            path.setAttribute("tabindex", "0");
+            if (entry.bounds) {
+              districtBoundsById.set(entry.district.id, entry.bounds);
+            }
+
+            const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+            title.textContent = aggregate
+              ? entry.district.id + " · " + entry.district.name + " · Stufe " + level
+              : entry.district.id + " · " + entry.district.name + " · Keine Hitzewarnung";
+            path.appendChild(title);
+            path.addEventListener("click", () => {
+              const area = { ...entry.district, kind: "district" };
+              districtSearchEl.value = areaLabel(area);
+              selectArea(area);
+            });
+            svg.appendChild(path);
+          }
+        } else {
+          const basePath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          basePath.setAttribute("class", "map-district level-0");
+          basePath.setAttribute(
+            "d",
+            baseRings
+              .map((ring) =>
+                ring.points
+                  .map(project)
+                  .map(([x, y], index) => (index === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1))
+                  .join(" ") + " Z"
+              )
+              .join(" ")
+          );
+          const baseTitle = document.createElementNS("http://www.w3.org/2000/svg", "title");
+          baseTitle.textContent = "Keine Hitzewarnung in nicht farbig überlagerten Bereichen";
+          basePath.appendChild(baseTitle);
+          svg.appendChild(basePath);
+        }
 
         const byFeature = new Map();
         for (const ring of rings) {
@@ -1685,7 +2624,12 @@ ${NAV_CSS}
 
         for (const entry of byFeature.values()) {
           const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-          path.setAttribute("class", "map-feature level-" + entry.feature.level);
+          path.setAttribute(
+            "class",
+            municipalityRings.length > 0 || districtRings.length > 0
+              ? "map-warning-outline"
+              : "map-feature level-" + entry.feature.level
+          );
           path.setAttribute("d", entry.paths.join(" "));
 
           const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
@@ -1698,28 +2642,18 @@ ${NAV_CSS}
           svg.appendChild(path);
         }
 
-        mapEl.appendChild(svg);
-
-        if (features.length === 0) {
-          const empty = document.createElement("div");
-          empty.className = "map-feature-item";
-          empty.textContent = "Keine Warnungen in der aktuellen Tagesauswahl.";
-          mapFeaturesEl.appendChild(empty);
-          return;
-        }
-
-        for (const feature of features) {
-          const item = document.createElement("div");
-          item.className = "map-feature-item";
-          const title = document.createElement("strong");
-          title.textContent = feature.id + " · Stufe " + feature.level;
-          const meta = document.createElement("span");
-          meta.textContent =
-            feature.municipalityCount + " Gemeinde(n) · " +
-            formatTime(feature.start) + " → " + formatTime(feature.end);
-          item.appendChild(title);
-          item.appendChild(meta);
-          mapFeaturesEl.appendChild(item);
+        mapSvgEl = svg;
+        mapCanvasEl.appendChild(svg);
+        if (
+          selectedArea &&
+          (
+            (selectedArea.kind === "municipality" && municipalityBoundsById.has(selectedArea.id)) ||
+            (selectedArea.kind === "district" && districtBoundsById.has(selectedArea.id))
+          )
+        ) {
+          selectArea(selectedArea);
+        } else {
+          applyViewBox(currentViewBox);
         }
       }
 
@@ -1800,8 +2734,8 @@ ${NAV_CSS}
           currentSnapshot = result;
           renderMeta(result);
           renderDayFilters(result);
+          renderDistrictSearchOptions(result);
           renderMapSummary(result);
-          renderDistrictSummary(result);
           renderMap(result);
           renderMunicipalities(result);
           statusEl.textContent =
@@ -1831,9 +2765,42 @@ ${NAV_CSS}
         }
 
         renderMapSummary(currentSnapshot);
-        renderDistrictSummary(currentSnapshot);
         renderMap(currentSnapshot);
         renderMunicipalities(currentSnapshot);
+      });
+
+      districtSearchEl.addEventListener("change", () => {
+        const area = findAreaBySearchValue(districtSearchEl.value);
+        if (area) {
+          districtSearchEl.value = areaLabel(area);
+          selectArea(area);
+        } else if (!districtSearchEl.value.trim()) {
+          resetMapView();
+        }
+      });
+
+      districtSearchEl.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") {
+          return;
+        }
+        event.preventDefault();
+        const area = findAreaBySearchValue(districtSearchEl.value);
+        if (area) {
+          districtSearchEl.value = areaLabel(area);
+          selectArea(area);
+        }
+      });
+
+      zoomInButton.addEventListener("click", () => {
+        zoomMap(0.72);
+      });
+
+      zoomOutButton.addEventListener("click", () => {
+        zoomMap(1.38);
+      });
+
+      zoomResetButton.addEventListener("click", () => {
+        resetMapView();
       });
 
       void loadSnapshot();
@@ -1862,6 +2829,47 @@ if (developMode) {
         res.setHeader("Surrogate-Control", "no-store");
         res.status(200).type("html").send(renderWarningsPage());
     });
+    app.get("/test/pushover/ui", (_req, res) => {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+        res.setHeader("Surrogate-Control", "no-store");
+        res.status(200).type("html").send(renderPushoverSettingsPage());
+    });
+    app.get("/test/pushover/status", async (_req, res) => {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+        res.setHeader("Surrogate-Control", "no-store");
+        try {
+            res.status(200).json(await (0, pushover_1.getPushoverReportStatus)());
+        }
+        catch (error) {
+            res.status(500).json({
+                errorCode: "PUSHOVER_STATUS_FAILED",
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
+    });
+    app.post("/test/pushover/status", async (req, res) => {
+        const enabled = req.body?.enabled;
+        if (typeof enabled !== "boolean") {
+            res.status(400).json({
+                errorCode: "INVALID_INPUT",
+                message: "enabled must be a boolean.",
+            });
+            return;
+        }
+        try {
+            res.status(200).json(await (0, pushover_1.setPushoverReportsEnabled)(enabled));
+        }
+        catch (error) {
+            res.status(500).json({
+                errorCode: "PUSHOVER_STATUS_SAVE_FAILED",
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
+    });
     app.get("/test/warnings/data", async (_req, res) => {
         res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
         res.setHeader("Pragma", "no-cache");
@@ -1869,7 +2877,11 @@ if (developMode) {
         res.setHeader("Surrogate-Control", "no-store");
         try {
             const snapshot = await (0, hitze_1.loadCurrentWarningsSnapshot)();
-            res.status(200).json(snapshot);
+            res.status(200).json({
+                ...snapshot,
+                districtFeatures: loadPoliticalDistrictFeatures(),
+                municipalityFeatures: loadMunicipalityFeatures(),
+            });
         }
         catch (error) {
             const err = error;
@@ -2015,7 +3027,7 @@ if (developMode) {
 app.listen(port, "0.0.0.0", () => {
     console.log(`Hitze backend listening on port ${port} (develop mode: ${developMode})`);
     if ((0, pushover_1.isPushoverConfigured)()) {
-        console.log("Pushover reports enabled");
+        console.log("Pushover reports configured");
     }
     else {
         console.log("Pushover reports disabled (set PUSHOVER_APP_TOKEN and PUSHOVER_USER_KEY to enable)");

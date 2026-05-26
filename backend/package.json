@@ -4,7 +4,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-map-geojson.js",
     "start": "node dist/src/server.js",
     "dev": "tsx watch src/server.ts"
   },

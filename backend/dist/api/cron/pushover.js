@@ -1,10 +1,16 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isPushoverConfigured = isPushoverConfigured;
+exports.getPushoverReportStatus = getPushoverReportStatus;
+exports.setPushoverReportsEnabled = setPushoverReportsEnabled;
 exports.sendPushoverReport = sendPushoverReport;
+const redis_1 = require("redis");
 const PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json";
 const PUSHOVER_TIMEOUT_MS = 5_000;
 const PUSHOVER_MAX_FAILED_TARGETS_IN_MESSAGE = 5;
+const PUSHOVER_REPORTS_ENABLED_KEY = "hitze:v1:pushover_reports_enabled";
+let settingsRedisClient = null;
+let memoryPushoverReportsEnabled = null;
 function getPushoverConfig() {
     const appToken = process.env.PUSHOVER_APP_TOKEN?.trim();
     const userKey = process.env.PUSHOVER_USER_KEY?.trim();
@@ -19,6 +25,74 @@ function getPushoverConfig() {
 }
 function isPushoverConfigured() {
     return getPushoverConfig() !== null;
+}
+function parseBooleanSetting(value) {
+    if (!value) {
+        return null;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+        return true;
+    }
+    if (["0", "false", "no", "off"].includes(normalized)) {
+        return false;
+    }
+    return null;
+}
+function defaultPushoverReportsEnabled() {
+    return parseBooleanSetting(process.env.PUSHOVER_REPORTS_ENABLED) ?? true;
+}
+async function getSettingsRedisClient() {
+    const redisUrl = process.env.REDIS_URL?.trim();
+    if (!redisUrl) {
+        return null;
+    }
+    if (!settingsRedisClient) {
+        settingsRedisClient = (0, redis_1.createClient)({ url: redisUrl });
+        settingsRedisClient.on("error", (error) => {
+            console.warn("pushover_settings_redis_error", {
+                error: error instanceof Error ? error.message : String(error),
+            });
+        });
+    }
+    if (!settingsRedisClient.isOpen) {
+        await settingsRedisClient.connect();
+    }
+    return settingsRedisClient;
+}
+async function readStoredPushoverReportsEnabled() {
+    const client = await getSettingsRedisClient();
+    if (!client) {
+        return { value: memoryPushoverReportsEnabled, persistence: "memory" };
+    }
+    const stored = await client.get(PUSHOVER_REPORTS_ENABLED_KEY);
+    return {
+        value: parseBooleanSetting(stored ?? undefined),
+        persistence: "redis",
+    };
+}
+async function getPushoverReportStatus() {
+    const configured = isPushoverConfigured();
+    const defaultEnabled = defaultPushoverReportsEnabled();
+    const stored = await readStoredPushoverReportsEnabled();
+    const desiredEnabled = stored.value ?? defaultEnabled;
+    return {
+        configured,
+        enabled: configured && desiredEnabled,
+        defaultEnabled,
+        storedEnabled: stored.value,
+        persistence: stored.persistence,
+    };
+}
+async function setPushoverReportsEnabled(enabled) {
+    const client = await getSettingsRedisClient();
+    if (!client) {
+        memoryPushoverReportsEnabled = enabled;
+    }
+    else {
+        await client.set(PUSHOVER_REPORTS_ENABLED_KEY, enabled ? "true" : "false");
+    }
+    return getPushoverReportStatus();
 }
 function formatDuration(ms) {
     if (ms < 1000) {
@@ -62,6 +136,24 @@ function buildPushoverMessage(input) {
     };
 }
 async function sendPushoverReport(input) {
+    let status;
+    try {
+        status = await getPushoverReportStatus();
+    }
+    catch (error) {
+        console.warn(`[${input.requestId}] pushover_status_error`, {
+            error: error instanceof Error ? error.message : String(error),
+        });
+        return;
+    }
+    if (!status.enabled) {
+        console.log(`[${input.requestId}] pushover_report_skipped`, {
+            configured: status.configured,
+            storedEnabled: status.storedEnabled,
+            defaultEnabled: status.defaultEnabled,
+        });
+        return;
+    }
     const config = getPushoverConfig();
     if (!config) {
         return;

@@ -1,6 +1,12 @@
+import { createClient, type RedisClientType } from "redis";
+
 const PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json";
 const PUSHOVER_TIMEOUT_MS = 5_000;
 const PUSHOVER_MAX_FAILED_TARGETS_IN_MESSAGE = 5;
+const PUSHOVER_REPORTS_ENABLED_KEY = "hitze:v1:pushover_reports_enabled";
+
+let settingsRedisClient: RedisClientType | null = null;
+let memoryPushoverReportsEnabled: boolean | null = null;
 
 export interface PushoverReportInput {
   requestId: string;
@@ -22,6 +28,14 @@ interface PushoverConfig {
   device: string | undefined;
 }
 
+export interface PushoverReportStatus {
+  configured: boolean;
+  enabled: boolean;
+  defaultEnabled: boolean;
+  storedEnabled: boolean | null;
+  persistence: "redis" | "memory";
+}
+
 function getPushoverConfig(): PushoverConfig | null {
   const appToken = process.env.PUSHOVER_APP_TOKEN?.trim();
   const userKey = process.env.PUSHOVER_USER_KEY?.trim();
@@ -39,6 +53,92 @@ function getPushoverConfig(): PushoverConfig | null {
 
 export function isPushoverConfigured(): boolean {
   return getPushoverConfig() !== null;
+}
+
+function parseBooleanSetting(value: string | undefined): boolean | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return null;
+}
+
+function defaultPushoverReportsEnabled(): boolean {
+  return parseBooleanSetting(process.env.PUSHOVER_REPORTS_ENABLED) ?? true;
+}
+
+async function getSettingsRedisClient(): Promise<RedisClientType | null> {
+  const redisUrl = process.env.REDIS_URL?.trim();
+  if (!redisUrl) {
+    return null;
+  }
+
+  if (!settingsRedisClient) {
+    settingsRedisClient = createClient({ url: redisUrl });
+    settingsRedisClient.on("error", (error: unknown) => {
+      console.warn("pushover_settings_redis_error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  if (!settingsRedisClient.isOpen) {
+    await settingsRedisClient.connect();
+  }
+
+  return settingsRedisClient;
+}
+
+async function readStoredPushoverReportsEnabled(): Promise<{
+  value: boolean | null;
+  persistence: "redis" | "memory";
+}> {
+  const client = await getSettingsRedisClient();
+  if (!client) {
+    return { value: memoryPushoverReportsEnabled, persistence: "memory" };
+  }
+
+  const stored = await client.get(PUSHOVER_REPORTS_ENABLED_KEY);
+  return {
+    value: parseBooleanSetting(stored ?? undefined),
+    persistence: "redis",
+  };
+}
+
+export async function getPushoverReportStatus(): Promise<PushoverReportStatus> {
+  const configured = isPushoverConfigured();
+  const defaultEnabled = defaultPushoverReportsEnabled();
+  const stored = await readStoredPushoverReportsEnabled();
+  const desiredEnabled = stored.value ?? defaultEnabled;
+
+  return {
+    configured,
+    enabled: configured && desiredEnabled,
+    defaultEnabled,
+    storedEnabled: stored.value,
+    persistence: stored.persistence,
+  };
+}
+
+export async function setPushoverReportsEnabled(enabled: boolean): Promise<PushoverReportStatus> {
+  const client = await getSettingsRedisClient();
+
+  if (!client) {
+    memoryPushoverReportsEnabled = enabled;
+  } else {
+    await client.set(PUSHOVER_REPORTS_ENABLED_KEY, enabled ? "true" : "false");
+  }
+
+  return getPushoverReportStatus();
 }
 
 function formatDuration(ms: number): string {
@@ -98,6 +198,25 @@ function buildPushoverMessage(input: PushoverReportInput): {
 }
 
 export async function sendPushoverReport(input: PushoverReportInput): Promise<void> {
+  let status: PushoverReportStatus;
+  try {
+    status = await getPushoverReportStatus();
+  } catch (error) {
+    console.warn(`[${input.requestId}] pushover_status_error`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  if (!status.enabled) {
+    console.log(`[${input.requestId}] pushover_report_skipped`, {
+      configured: status.configured,
+      storedEnabled: status.storedEnabled,
+      defaultEnabled: status.defaultEnabled,
+    });
+    return;
+  }
+
   const config = getPushoverConfig();
   if (!config) {
     return;

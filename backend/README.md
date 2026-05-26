@@ -10,12 +10,18 @@ npm run start
 
 Service listens on `PORT` (default `3000`).
 
+`npm run build` also downloads the Statistik Austria political district and
+municipality WFS datasets (`STATISTIK_AUSTRIA_POLBEZ_20260101` and
+`STATISTIK_AUSTRIA_GEM_20260101`) as GeoJSON in `EPSG:31287`, simplifies them
+for the test map, and writes them to `dist/assets/`.
+
 ## Endpoints
 
 - `GET /health`
 - `GET /cron/hitze`
 - `POST /cron/hitze` (requires `Authorization: Bearer <CRON_SECRET>` when `CRON_SECRET` is set)
 - `GET /test/push/ui` (Dev-only test UI for recipient selection from `gemliste_knz.xls`)
+- `GET /test/pushover/ui` (Dev-only UI for enabling/disabling Pushover heat-warning reports)
 - `POST /test/push` (Dev-only manual test push to one municipality)
 - `POST /test/push/bulk` (Dev-only manual test push to multiple municipalities)
 - `POST /test/push/token` (Dev-only manual test push to one device token)
@@ -42,6 +48,8 @@ Optional:
 - `HITZE_MIN_LEVEL` (default `2`, based on Hitze-V levels; GeoSphere heat level `1` maps to Hitze-V warning level `2`)
 - `HITZE_USE_STATIC_GEOSPHERE_RESPONSE` (`true`/`1`/`yes`/`on` enables a static test payload instead of the GeoSphere API)
 - `HITZE_STATIC_GEOSPHERE_URL` (required when static test mode is enabled, for example `https://raw.githubusercontent.com/entttom/Hitze-V-App/main/backend/example_response.json`)
+- `PUSHOVER_APP_TOKEN` and `PUSHOVER_USER_KEY` (enable backend Pushover reports after heat-warning sends)
+- `PUSHOVER_REPORTS_ENABLED` (`false`/`0`/`no`/`off` disables Pushover reports by default; the dev UI stores overrides in Redis)
 - `CRON_SECRET`
 - `develop` or `DEVELOP` (`true`/`1`/`yes`/`on` enables the test routes and test website)
 - `PORT`
