@@ -59,6 +59,14 @@ final class SubscriptionManager: ObservableObject {
         let storedLanguageCode = storedSubscribedLanguageCode()
         let previousLanguageCode = storedLanguageCode ?? desiredLanguageCode
 
+        NSLog(
+            "Subscription sync started: coordinates=%ld desiredLanguage=%@ storedLanguage=%@ currentLocalMunicipalityIDs=%@",
+            coordinates.count,
+            desiredLanguageCode,
+            storedLanguageCode ?? "-",
+            formatMunicipalityIDs(subscribedMunicipalityIDs)
+        )
+
         if coordinates.isEmpty {
             let errors = await synchronizeTopics(
                 desiredMunicipalityIDs: [],
@@ -76,17 +84,47 @@ final class SubscriptionManager: ObservableObject {
 
         for coordinate in coordinates {
             do {
+                NSLog(
+                    "Subscription lookup started: lat=%.6f lon=%.6f",
+                    coordinate.latitude,
+                    coordinate.longitude
+                )
                 let municipalityID = try await fetchMunicipalityID(for: coordinate)
                 resolvedMunicipalityIDs.insert(municipalityID)
+                NSLog(
+                    "Subscription lookup resolved: lat=%.6f lon=%.6f municipalityId=%@",
+                    coordinate.latitude,
+                    coordinate.longitude,
+                    municipalityID
+                )
             } catch is CancellationError {
                 NSLog("GeoSphere subscription lookup cancelled")
                 return
             } catch let error as SubscriptionError {
                 lookupErrors.append(error)
+                NSLog(
+                    "Subscription lookup failed: lat=%.6f lon=%.6f error=%@",
+                    coordinate.latitude,
+                    coordinate.longitude,
+                    error.localizedDescription
+                )
             } catch {
                 lookupErrors.append(.network(message: error.localizedDescription))
+                NSLog(
+                    "Subscription lookup failed: lat=%.6f lon=%.6f error=%@",
+                    coordinate.latitude,
+                    coordinate.longitude,
+                    error.localizedDescription
+                )
             }
         }
+
+        NSLog(
+            "Subscription lookup summary: resolvedMunicipalityIDs=%@ lookupErrors=%ld allowUnsubscribe=%@",
+            formatMunicipalityIDs(resolvedMunicipalityIDs),
+            lookupErrors.count,
+            lookupErrors.isEmpty ? "true" : "false"
+        )
 
         // Keine destruktiven Unsubscribes durchführen, wenn kein einziger Standort erfolgreich aufgelöst wurde.
         if resolvedMunicipalityIDs.isEmpty {
@@ -157,6 +195,20 @@ final class SubscriptionManager: ObservableObject {
         let shouldCleanupLegacyTopics = allowUnsubscribe && previousLanguageCode == desiredLanguageCode && !hasStoredLanguageCode
         var successfulTargetSubscriptions = Set<String>()
 
+        NSLog(
+            "Subscription topic diff: desired=%@ currentLocal=%@ previousLanguage=%@ desiredLanguage=%@ languageChanged=%@ requiresMigration=%@ allowUnsubscribe=%@ toSubscribe=%@ toUnsubscribe=%@ cleanupLegacy=%@",
+            formatMunicipalityIDs(desiredMunicipalityIDs),
+            formatMunicipalityIDs(workingSet),
+            previousLanguageCode,
+            desiredLanguageCode,
+            languageChanged ? "true" : "false",
+            requiresTopicMigration ? "true" : "false",
+            allowUnsubscribe ? "true" : "false",
+            formatMunicipalityIDs(toSubscribe),
+            formatMunicipalityIDs(toUnsubscribe),
+            shouldCleanupLegacyTopics ? "true" : "false"
+        )
+
         if !toSubscribe.isEmpty || !toUnsubscribe.isEmpty || shouldCleanupLegacyTopics {
             do {
                 try await FirebaseRegistrationManager.shared.registerForPushNotificationsIfNeeded()
@@ -176,10 +228,26 @@ final class SubscriptionManager: ObservableObject {
                 )
                 workingSet.insert(municipalityID)
                 successfulTargetSubscriptions.insert(municipalityID)
-                print("Subscribed municipalityId: \(municipalityID)")
+                NSLog(
+                    "Subscribed municipalityId: %@ topic=%@",
+                    municipalityID,
+                    topicName(for: municipalityID, languageCode: desiredLanguageCode)
+                )
             } catch let error as SubscriptionError {
+                NSLog(
+                    "Subscribe failed municipalityId=%@ topic=%@ error=%@",
+                    municipalityID,
+                    topicName(for: municipalityID, languageCode: desiredLanguageCode),
+                    error.localizedDescription
+                )
                 errors.append(error)
             } catch {
+                NSLog(
+                    "Subscribe failed municipalityId=%@ topic=%@ error=%@",
+                    municipalityID,
+                    topicName(for: municipalityID, languageCode: desiredLanguageCode),
+                    error.localizedDescription
+                )
                 errors.append(.firebase(message: error.localizedDescription))
             }
         }
@@ -204,10 +272,26 @@ final class SubscriptionManager: ObservableObject {
                 if !desiredMunicipalityIDs.contains(municipalityID) {
                     workingSet.remove(municipalityID)
                 }
-                print("Unsubscribed municipalityId: \(municipalityID)")
+                NSLog(
+                    "Unsubscribed municipalityId: %@ topic=%@",
+                    municipalityID,
+                    topicName(for: municipalityID, languageCode: previousLanguageCode)
+                )
             } catch let error as SubscriptionError {
+                NSLog(
+                    "Unsubscribe failed municipalityId=%@ topic=%@ error=%@",
+                    municipalityID,
+                    topicName(for: municipalityID, languageCode: previousLanguageCode),
+                    error.localizedDescription
+                )
                 errors.append(error)
             } catch {
+                NSLog(
+                    "Unsubscribe failed municipalityId=%@ topic=%@ error=%@",
+                    municipalityID,
+                    topicName(for: municipalityID, languageCode: previousLanguageCode),
+                    error.localizedDescription
+                )
                 errors.append(.firebase(message: error.localizedDescription))
             }
         }
@@ -216,9 +300,26 @@ final class SubscriptionManager: ObservableObject {
             for municipalityID in workingSet.sorted() {
                 do {
                     try await unsubscribeFromLegacyTopic(municipalityID: municipalityID)
+                    NSLog(
+                        "Unsubscribed legacy municipalityId: %@ topic=%@",
+                        municipalityID,
+                        legacyTopicName(for: municipalityID)
+                    )
                 } catch let error as SubscriptionError {
+                    NSLog(
+                        "Legacy unsubscribe failed municipalityId=%@ topic=%@ error=%@",
+                        municipalityID,
+                        legacyTopicName(for: municipalityID),
+                        error.localizedDescription
+                    )
                     errors.append(error)
                 } catch {
+                    NSLog(
+                        "Legacy unsubscribe failed municipalityId=%@ topic=%@ error=%@",
+                        municipalityID,
+                        legacyTopicName(for: municipalityID),
+                        error.localizedDescription
+                    )
                     errors.append(.firebase(message: error.localizedDescription))
                 }
             }
@@ -227,6 +328,13 @@ final class SubscriptionManager: ObservableObject {
         subscribedMunicipalityIDs = workingSet
         persistSubscribedMunicipalityIDs()
         persistSubscribedLanguageCode(desiredLanguageCode)
+
+        NSLog(
+            "Subscription sync finished: persistedMunicipalityIDs=%@ persistedLanguage=%@ errors=%ld",
+            formatMunicipalityIDs(workingSet),
+            desiredLanguageCode,
+            errors.count
+        )
 
         if workingSet.isEmpty {
             do {
@@ -409,6 +517,11 @@ final class SubscriptionManager: ObservableObject {
 
     private func legacyTopicName(for municipalityID: String) -> String {
         "warngebiet_\(municipalityID)"
+    }
+
+    private func formatMunicipalityIDs(_ municipalityIDs: Set<String>) -> String {
+        let formatted = municipalityIDs.sorted().joined(separator: ",")
+        return formatted.isEmpty ? "-" : formatted
     }
 
     private func persistSubscribedMunicipalityIDs() {

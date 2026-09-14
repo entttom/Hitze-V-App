@@ -150,8 +150,8 @@ class ExampleUnitTest {
         val german = Copybook(ResolvedLanguage.DE)
         val english = Copybook(ResolvedLanguage.EN)
 
-        assertEquals("Willkommen bei Hitze-V", german.onboardingWelcomeTitle)
-        assertEquals("Welcome to Hitze-V", english.onboardingWelcomeTitle)
+        assertEquals("Willkommen bei HitzeV", german.onboardingWelcomeTitle)
+        assertEquals("Welcome to HitzeV", english.onboardingWelcomeTitle)
         assertEquals("Stabil", german.severityHeadline(HazardSeverity.NONE))
         assertEquals("Critical", english.severityHeadline(HazardSeverity.HEAT_RED))
     }

@@ -1057,7 +1057,7 @@ struct Copybook {
             .map { InfoBullet(text: String($0), cta: nil) }
     }
 
-    var shortTitle: String { t("Hitze-V", "Heat-V") }
+    var shortTitle: String { t("HitzeV", "Heat-V") }
     var dashboardTitle: String { t("Sicher durch die Hitze", "Heat Safety at a Glance") }
     var dashboardSubtitle: String { t("Ampelstatus, UV und Arbeitsplätze live auf einen Blick.", "Traffic-light status, UV and workplaces live in one view.") }
     var glanceTitle: String { t("Schnellübersicht", "Quick Glance") }
@@ -1357,7 +1357,7 @@ struct Copybook {
     }
     var legalLinkURL: String { "https://www.arbeitsmediziner.wien" }
     var legalLinkLabel: String { "arbeitsmediziner.wien" }
-    var onboardingWelcomeTitle: String { t("Willkommen bei Hitze-V", "Welcome to Hitze-V") }
+    var onboardingWelcomeTitle: String { t("Willkommen bei HitzeV", "Welcome to HitzeV") }
     var onboardingWelcomeText: String { t("Wir helfen dir, die gesetzlichen Vorgaben zu Gefahren durch Hitze und natürliche UV-Strahlung bei Arbeiten im Freien einzuhalten. Behalte Temperaturen und UV-Index immer im Blick.", "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times.") }
     var onboardingPushTitle: String { t("Bleib informiert", "Stay informed") }
     var onboardingPushText: String { t("Damit wir dich bei gefährlichen Hitzewerten an deinen Arbeitsplätzen rechtzeitig warnen können, benötigen wir deine Erlaubnis für Push-Benachrichtigungen. Push-Nachrichten sind aktuell nur für Hitzewarnmeldungen auf iOS und Android verfügbar. UV-Warnmeldungen können derzeit nicht per Push versendet werden. Bitte erlaube diese im nächsten Schritt.", "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.") }
@@ -1469,7 +1469,7 @@ struct Copybook {
         case .heatOrange:
             return t("Arbeitszeiten anpassen und Teams aktiv schützen.", "Adjust schedules and actively protect teams.")
         case .heatRed:
-            return t("Sofort Hitze-V Schutzmaßnahmen umsetzen.", "Apply Heat-V protective measures immediately.")
+            return t("Sofort HitzeV Schutzmaßnahmen umsetzen.", "Apply Heat-V protective measures immediately.")
         case .coldYellow, .coldOrange, .coldRed:
             return t("Alles ruhig. Standardmaßnahmen reichen aus.", "All clear. Standard precautions are sufficient.")
         }

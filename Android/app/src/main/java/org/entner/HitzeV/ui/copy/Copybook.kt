@@ -47,7 +47,7 @@ class Copybook(private val language: ResolvedLanguage) {
         .filter { it.isNotEmpty() }
         .map { InfoBullet(text = it) }
 
-    val shortTitle: String = t("Hitze-V", "Heat-V")
+    val shortTitle: String = t("HitzeV", "Heat-V")
     val dashboardTitle: String = t("Sicher durch die Hitze", "Heat Safety at a Glance")
     val dashboardSubtitle: String = t(
         "Ampelstatus, UV und Arbeitsplätze live auf einen Blick.",
@@ -172,7 +172,7 @@ class Copybook(private val language: ResolvedLanguage) {
     }
     val legalLinkURL: String = "https://www.arbeitsmediziner.wien"
     val legalLinkLabel: String = "arbeitsmediziner.wien"
-    val onboardingWelcomeTitle: String = t("Willkommen bei Hitze-V", "Welcome to Hitze-V")
+    val onboardingWelcomeTitle: String = t("Willkommen bei HitzeV", "Welcome to HitzeV")
     val onboardingWelcomeText: String = t(
         "Wir helfen dir, die gesetzlichen Vorgaben zu Gefahren durch Hitze und natürliche UV-Strahlung bei Arbeiten im Freien einzuhalten. Behalte Temperaturen und UV-Index immer im Blick.",
         "We help you comply with legal requirements regarding hazards from heat and natural UV radiation for outdoor work. Keep an eye on temperatures and UV index at all times."
@@ -425,7 +425,7 @@ class Copybook(private val language: ResolvedLanguage) {
             t("Alles ruhig. Standardmaßnahmen reichen aus.", "All clear. Standard precautions are sufficient.")
         HazardSeverity.HEAT_YELLOW -> t("Pausen und Schatten erhöhen.", "Increase breaks and shade usage.")
         HazardSeverity.HEAT_ORANGE -> t("Arbeitszeiten anpassen und Teams aktiv schützen.", "Adjust schedules and actively protect teams.")
-        HazardSeverity.HEAT_RED -> t("Sofort Hitze-V Schutzmaßnahmen umsetzen.", "Apply Heat-V protective measures immediately.")
+        HazardSeverity.HEAT_RED -> t("Sofort HitzeV Schutzmaßnahmen umsetzen.", "Apply Heat-V protective measures immediately.")
     }
 
     fun dashboardRiskHeadline(isUvOnlyElevated: Boolean, severity: HazardSeverity): String =

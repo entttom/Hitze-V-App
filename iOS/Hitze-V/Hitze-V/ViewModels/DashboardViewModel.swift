@@ -395,6 +395,8 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private func reconcilePushSubscriptions(forceUnsubscribeWhenDisabled: Bool) async {
+        logPushReconciliation(forceUnsubscribeWhenDisabled: forceUnsubscribeWhenDisabled)
+
         if isPushNotificationsEnabled {
             await subscriptionManager.syncTopics(
                 for: activePushWorksites().map(\.coordinate),
@@ -407,6 +409,28 @@ final class DashboardViewModel: ObservableObject {
         if let error = subscriptionManager.lastError?.errorDescription {
             NSLog("Subscription sync failed: %@", error)
         }
+    }
+
+    private func logPushReconciliation(forceUnsubscribeWhenDisabled: Bool) {
+        let activeWorksites = activePushWorksites()
+        let disabledIDs = disabledPushWorksiteIDs.map(\.uuidString).sorted().joined(separator: ",")
+        let worksiteSummary = worksites
+            .map { worksite in
+                let pushState = disabledPushWorksiteIDs.contains(worksite.id) ? "push=off" : "push=on"
+                return "\(worksite.name)[id=\(worksite.id.uuidString),\(pushState),lat=\(String(format: "%.6f", worksite.latitude)),lon=\(String(format: "%.6f", worksite.longitude))]"
+            }
+            .joined(separator: " | ")
+
+        NSLog(
+            "Push reconcile requested: globalEnabled=%@ forceUnsubscribe=%@ language=%@ totalWorksites=%ld activeWorksites=%ld disabledWorksiteIDs=%@ worksites=%@",
+            isPushNotificationsEnabled ? "true" : "false",
+            forceUnsubscribeWhenDisabled ? "true" : "false",
+            currentPushLanguageCode(),
+            worksites.count,
+            activeWorksites.count,
+            disabledIDs.isEmpty ? "-" : disabledIDs,
+            worksiteSummary.isEmpty ? "-" : worksiteSummary
+        )
     }
 
     private func isOutsideAustriaMunicipalityError(_ error: Error) -> Bool {

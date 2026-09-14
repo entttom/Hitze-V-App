@@ -1,4 +1,4 @@
-# Hitze-V Backend (Coolify)
+# HitzeV Backend (Coolify)
 
 ## Start local
 

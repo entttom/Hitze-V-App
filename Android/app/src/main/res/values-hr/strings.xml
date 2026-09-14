@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Hitze-V</string>
+    <string name="app_name">HitzeV</string>
     <string name="notification_channel_name">Upozorenja na vrućinu</string>
     <string name="notification_channel_description">Obavijesti za upozorenja na vrućinu</string>
 </resources>
