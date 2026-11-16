@@ -129,11 +129,11 @@ private struct AddressResultRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(result.title)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(Color.primary)
                     if result.subtitle != result.title {
                         Text(result.subtitle)
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

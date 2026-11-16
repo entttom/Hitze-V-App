@@ -71,10 +71,15 @@ struct InfoView: View {
 
     @ViewBuilder
     private func sectionHeader(_ title: String) -> some View {
+        // Single-word compounds ("HITZE-SCHUTZMASSNAHMEN") got truncated after wrapping at the
+        // hyphen at large text sizes; keep them on one line and shrink instead.
+        let isSingleWord = !title.contains(" ")
         Text(title)
             .font(.headline)
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
+            .lineLimit(isSingleWord ? 1 : nil)
+            .minimumScaleFactor(isSingleWord ? 0.5 : 1)
             .accessibilityAddTraits(.isHeader)
     }
 }

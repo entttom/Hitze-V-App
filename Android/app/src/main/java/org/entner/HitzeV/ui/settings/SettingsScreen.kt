@@ -174,10 +174,10 @@ fun SettingsScreen(state: DashboardUiState, actions: SettingsActions) {
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(copy.dataSourceLine, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+                        Text(copy.dataSourceLine, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
                         Text(copy.weatherAttributionLine, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
                         Text(copy.geocodingAttributionLine, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
-                        Text(copy.copyrightLine(Year.now().value), textAlign = TextAlign.Center)
+                        Text(copy.copyrightLine(Year.now().value), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
                         TextButton(onClick = { actions.onOpenLink(copy.legalLinkURL) }) {
                             Text(copy.legalLinkLabel)
                         }

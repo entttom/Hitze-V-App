@@ -349,7 +349,9 @@ class DashboardViewModel(
                     state.copy(
                         preferencesLoaded = true,
                         worksites = stored.worksites,
-                        loads = state.loads.filterKeys { id -> stored.worksites.any { it.id == id } },
+                        // Loads are not filtered here: the combined flows can emit an older worksite
+                        // list after addWorksite() stored the new load, which dropped it and left the
+                        // new card stuck on "loading". deleteWorksite() removes its load explicitly.
                         appLanguage = stored.language,
                         appTheme = stored.theme,
                         hasCompletedOnboarding = stored.hasCompletedOnboarding,

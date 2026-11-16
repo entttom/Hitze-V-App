@@ -169,7 +169,7 @@ class Copybook(val language: ResolvedLanguage) {
         "Geodaten © OpenStreetMap-Mitwirkende",
         "Geocoding data © OpenStreetMap contributors"
     )
-    val themeSystem: String = t("System", "System")
+    val themeSystem: String = t("Automatisch", "System")
     val themeLight: String = t("Hell", "Light")
     val themeDark: String = t("Dunkel", "Dark")
     val languageSection: String = t("Sprache", "Language")

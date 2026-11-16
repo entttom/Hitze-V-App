@@ -83,7 +83,9 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         case .tr:
             return .tr
         case .system:
-            let languageCode = Locale.current.language.languageCode?.identifier.lowercased() ?? "en"
+            // Locale.current only reports languages the bundle declares (en), so a German device
+            // would get English; the user's preferred languages decide, like the push extension.
+            let languageCode = PushLanguage.resolve(storedValue: nil, preferredLanguages: Locale.preferredLanguages) ?? "en"
             switch languageCode {
             case "de": return .de
             case "bg": return .bg
@@ -477,7 +479,7 @@ struct Copybook {
         )
     }
     var warningAllDay: String { t("Ganztägig", "All day") }
-    var themeSystem: String { t("System", "System") }
+    var themeSystem: String { t("Automatisch", "System") }
     var themeLight: String { t("Hell", "Light") }
     var themeDark: String { t("Dunkel", "Dark") }
     var languageSection: String { t("Sprache", "Language") }

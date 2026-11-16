@@ -130,7 +130,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 .accessibilityElement(children: .combine)
-                if let url = URL(string: UIApplication.openSettingsURLString) {
+                if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
                     Link(destination: url) {
                         Label(copy.openSettingsButton, systemImage: "gear")
                     }
@@ -257,7 +257,7 @@ private struct LanguageSelectionView: View {
                 } label: {
                     HStack {
                         Text(copy.languageOption(language))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(Color.primary)
                         Spacer()
                         if language == selectedLanguage {
                             Image(systemName: "checkmark")

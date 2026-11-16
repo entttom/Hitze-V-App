@@ -1,0 +1,6 @@
+New in HitzeV 1.3:
+• One notification per municipality with day, time and warning level – today and tomorrow combined.
+• If the warning level rises on the same day, you are told right away.
+• Visible loading state and time of the last update.
+• Better layout on tablets, in dark mode and with large text; improved screen reader support.
+• Many bug fixes.

@@ -4,8 +4,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -65,6 +68,7 @@ internal fun HeroCard(state: DashboardUiState, summary: DashboardSummary) {
     val copy = LocalCopybook.current
     val actionText = heroActionText(copy, summary)
     val countsKnown = summary.status != DashboardStatus.LOADING && summary.status != DashboardStatus.UNKNOWN
+    val stackMetrics = LocalDensity.current.fontScale > LARGE_FONT_SCALE
 
     Box(
         modifier = Modifier
@@ -108,19 +112,25 @@ internal fun HeroCard(state: DashboardUiState, summary: DashboardSummary) {
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            val metrics: @Composable (Modifier) -> Unit = { metricModifier ->
                 HeroMetric(
-                    modifier = Modifier.weight(1f),
+                    modifier = metricModifier,
                     icon = Icons.Rounded.LocationOn,
                     label = copy.workplaceLabel,
                     value = state.worksites.size.toString()
                 )
                 HeroMetric(
-                    modifier = Modifier.weight(1f),
+                    modifier = metricModifier,
                     icon = Icons.Rounded.WarningAmber,
                     label = copy.warningsLabel,
                     value = if (countsKnown || summary.warningCount > 0) summary.warningCount.toString() else copy.notAvailableShort
                 )
+            }
+            // Side by side, long labels ("Hitzewarnungen") split mid-word at large font scales.
+            if (stackMetrics) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { metrics(Modifier.fillMaxWidth()) }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { metrics(Modifier.weight(1f)) }
             }
 
             summary.oldestUpdate?.let { updated ->
@@ -248,7 +258,11 @@ internal fun GlanceCard(summary: DashboardSummary) {
         if (stackTiles) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { tiles(Modifier.fillMaxWidth()) }
         } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { tiles(Modifier.weight(1f)) }
+            // Equal tile heights even when one label wraps (e.g. "Aktuelles Risiko").
+            Row(
+                modifier = Modifier.height(IntrinsicSize.Min),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) { tiles(Modifier.weight(1f).fillMaxHeight()) }
         }
     }
 }

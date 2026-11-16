@@ -1,0 +1,6 @@
+Neu in HitzeV 1.3:
+• Eine Benachrichtigung pro Gemeinde mit Tag, Uhrzeit und Warnstufe – Heute und Morgen zusammengefasst.
+• Wird die Warnstufe am selben Tag erhöht, erfährst du es sofort.
+• Sichtbarer Ladezustand und Zeitpunkt der letzten Aktualisierung.
+• Bessere Darstellung auf Tablets, im Dunkelmodus und mit großer Schrift; verbesserte Bedienung mit Screenreader.
+• Viele Fehlerbehebungen.

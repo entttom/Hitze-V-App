@@ -27,3 +27,7 @@ Android/Upload - App ausführbar.app/
 
 # Python caches
 __pycache__/
+
+# Release helper output
+build-release/
+Android/app/src/main/play/release-notes/

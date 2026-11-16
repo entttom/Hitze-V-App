@@ -61,8 +61,9 @@ fun OnboardingScreen(showWelcome: Boolean, onContinue: () -> Unit) {
             modifier = Modifier
                 .readableWidth()
                 .fillMaxHeight()
-                .verticalScroll(rememberScrollState())
+                // Insets before the scroll so scrolled text never runs under the status bar.
                 .windowInsetsPadding(WindowInsets.safeDrawing)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(24.dp)
