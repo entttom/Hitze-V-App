@@ -9,7 +9,6 @@ import sys
 
 
 APP_ROOT = pathlib.Path(__file__).resolve().parents[1] / "iOS" / "Hitze-V" / "Hitze-V"
-CONTENT_VIEW = APP_ROOT / "ContentView.swift"
 CATALOG = APP_ROOT / "CopybookTranslationCatalog.swift"
 
 LANGUAGE_CODES = [
@@ -53,7 +52,7 @@ def decode_literal(literal: str) -> str:
 
 
 def required_english_keys() -> set[str]:
-    source = "\n".join(path.read_text() for path in APP_ROOT.glob("*.swift"))
+    source = "\n".join(path.read_text() for path in sorted(APP_ROOT.rglob("*.swift")))
     string_pattern = r'("""(?:.|\n)*?"""|"(?:[^"\\]|\\.)*")'
     patterns = [
         re.compile(r"t\(\s*" + string_pattern + r"\s*,\s*" + string_pattern + r"\s*\)", re.S),
@@ -198,12 +197,6 @@ def parse_dictionary_keys(source_text: str, dictionary_name: str) -> dict[str, s
 
 def available_keys() -> dict[str, set[str]]:
     result: dict[str, set[str]] = {code: set() for code in LANGUAGE_CODES}
-
-    content_view_text = CONTENT_VIEW.read_text()
-    for dictionary_name in ("translations", "longTextTranslations"):
-        parsed = parse_dictionary_keys(content_view_text, dictionary_name)
-        for code, keys in parsed.items():
-            result.setdefault(code, set()).update(keys)
 
     if CATALOG.exists():
         catalog_text = CATALOG.read_text()

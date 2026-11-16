@@ -1,5 +1,4 @@
 <resources>
-    <string name="app_name">HitzeV</string>
     <string name="notification_channel_name">Hőségriasztások</string>
     <string name="notification_channel_description">Értesítések a hőségriasztásokról</string>
 </resources>

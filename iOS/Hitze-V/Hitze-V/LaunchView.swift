@@ -1,87 +1,103 @@
 import SwiftUI
+import Combine
+
+/// Set once the root view has its initial state (stored worksites are loaded synchronously),
+/// so the launch overlay can go away without waiting for the network.
+@MainActor
+final class LaunchReadiness: ObservableObject {
+    static let shared = LaunchReadiness()
+    @Published private(set) var isReady = false
+
+    func markReady() {
+        isReady = true
+    }
+}
 
 struct LaunchView: View {
     @Binding var isPresented: Bool
-    
+
+    @ObservedObject private var readiness = LaunchReadiness.shared
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(AppSettingsKey.language, store: .hitzeShared) private var languageRawValue = AppLanguage.system.rawValue
     @State private var circleScale: CGFloat = 0.9
-    @State private var circleOpacity: Double = 0.35
-    @State private var contentOpacity: Double = 1.0
-    
-    @Environment(\.colorScheme) var colorScheme
-    @AppStorage("dashboard.language") private var languageRawValue = AppLanguage.system.rawValue
-    
-    private var isDark: Bool {
-        colorScheme == .dark
-    }
-    
-    private var selectedLanguage: AppLanguage {
-        AppLanguage(rawValue: languageRawValue) ?? .system
-    }
+    @State private var hasMinimumDisplayElapsed = false
+
+    private static let minimumDisplay: Duration = .milliseconds(350)
+    private static let maximumDisplay: Duration = .seconds(1)
 
     private var copy: Copybook {
-        Copybook(language: selectedLanguage.resolvedLanguage)
+        Copybook(language: (AppLanguage(rawValue: languageRawValue) ?? .system).resolvedLanguage)
     }
-    
+
     var body: some View {
         ZStack {
-            // Background matched to UILaunchScreen color
             Color("LaunchBackground")
                 .ignoresSafeArea()
-            
-            // Animated background elements (similar to AtmosphereBackground)
+
             ZStack {
                 Circle()
                     .fill(Color(red: 0.99, green: 0.65, blue: 0.27).opacity(0.18))
                     .frame(width: 220, height: 220)
                     .offset(x: 160, y: -250)
-                    .scaleEffect(circleScale)
-                    .opacity(circleOpacity)
-
                 Circle()
                     .fill(Color(red: 0.21, green: 0.71, blue: 0.88).opacity(0.14))
                     .frame(width: 260, height: 260)
                     .offset(x: -170, y: 260)
-                    .scaleEffect(circleScale)
-                    .opacity(circleOpacity)
             }
-            
-            // Content
+            .scaleEffect(circleScale)
+            .accessibilityHidden(true)
+
             VStack(spacing: 8) {
-                // Reuse the same logo as the static native launch screen
                 Image("LaunchLogo")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 92, height: 92)
-                    .shadow(color: Color.black.opacity(0.15), radius: 10, y: 5)
-                .padding(.bottom, 16)
-                
+                    .shadow(color: .black.opacity(0.15), radius: 10, y: 5)
+                    .padding(.bottom, 16)
+                    .accessibilityHidden(true)
+
                 Text(copy.shortTitle)
-                    .font(.system(size: 34, weight: .black, design: .rounded))
-                    .foregroundStyle(isDark ? .white : Color(red: 0.1, green: 0.1, blue: 0.15))
-                
+                    .font(.largeTitle.weight(.black))
+                    .fontDesign(.rounded)
+                    .foregroundStyle(colorScheme == .dark ? .white : Color(red: 0.1, green: 0.1, blue: 0.15))
+
                 Text(copy.dashboardTitle)
-                    .font(.system(.headline, design: .rounded).weight(.medium))
+                    .font(.headline.weight(.medium))
+                    .fontDesign(.rounded)
                     .foregroundStyle(.secondary)
             }
-            .opacity(contentOpacity)
         }
-        .onAppear {
-            // 1. Initial fade-in of elements
-            withAnimation(.easeOut(duration: 0.8)) {
-                circleScale = 1.0
-                circleOpacity = 1.0
-            }
-            
-            // 2. Pulse effect on the circles
-            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true).delay(0.8)) {
-                circleScale = 1.15
-            }
-            
-            // 3. Dismiss after delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
-                withAnimation(.easeInOut(duration: 0.4)) {
-                    isPresented = false
+        .task {
+            if !reduceMotion {
+                withAnimation(.easeInOut(duration: 0.8)) {
+                    circleScale = 1.1
                 }
+            }
+            try? await Task.sleep(for: Self.minimumDisplay)
+            hasMinimumDisplayElapsed = true
+            dismissIfReady()
+            try? await Task.sleep(for: Self.maximumDisplay - Self.minimumDisplay)
+            dismiss()
+        }
+        .onChange(of: readiness.isReady) { _, _ in
+            dismissIfReady()
+        }
+    }
+
+    private func dismissIfReady() {
+        if readiness.isReady && hasMinimumDisplayElapsed {
+            dismiss()
+        }
+    }
+
+    private func dismiss() {
+        guard isPresented else { return }
+        if reduceMotion {
+            isPresented = false
+        } else {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                isPresented = false
             }
         }
     }

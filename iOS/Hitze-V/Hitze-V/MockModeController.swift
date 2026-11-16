@@ -8,7 +8,14 @@ final class MockModeController: ObservableObject {
     @Published private(set) var isEnabled = false
     private(set) var sessionSeed: UInt64 = MockModeController.makeSeed()
 
-    private init() {}
+    private init() {
+        #if DEBUG
+        // Screenshot runs only; release builds can enter mock mode solely via the 10 s long press.
+        if ProcessInfo.processInfo.arguments.contains("-uiTestMockMode") {
+            isEnabled = true
+        }
+        #endif
+    }
 
     func activate() {
         isEnabled = true
@@ -23,7 +30,8 @@ final class MockModeController: ObservableObject {
 enum MockSnapshotFactory {
     static func makeSnapshot(for worksite: Worksite, sessionSeed: UInt64, now: Date = Date()) -> WorksiteSnapshot {
         var generator = SeededGenerator(seed: seed(for: worksite, sessionSeed: sessionSeed))
-        let calendar = gregorianViennaCalendar()
+        let calendar = ViennaTime.calendar
+        let today = calendar.startOfDay(for: now)
 
         var daySeverities: [HazardSeverity] = [.heatYellow, .heatOrange, .heatRed, .none]
         daySeverities.shuffle(using: &generator)
@@ -31,7 +39,7 @@ enum MockSnapshotFactory {
         let municipalityID = "mock-\(Int.random(in: 1000 ... 9999, using: &generator))"
         let municipalityName = mockMunicipalityName(using: &generator)
         let forecasts = (0..<4).compactMap { dayOffset -> DailyForecast? in
-            guard let date = calendar.date(byAdding: .day, value: dayOffset, to: now) else {
+            guard let date = calendar.date(byAdding: .day, value: dayOffset, to: today) else {
                 return nil
             }
 
@@ -98,7 +106,7 @@ enum MockSnapshotFactory {
             return Double.random(in: 35 ... 39, using: &generator)
         case .heatRed:
             return Double.random(in: 40 ... 44, using: &generator)
-        case .none, .coldYellow, .coldOrange, .coldRed:
+        case .none:
             return Double.random(in: 24 ... 29, using: &generator)
         }
     }
@@ -114,7 +122,7 @@ enum MockSnapshotFactory {
             return Double.random(in: 5.6 ... 7.8, using: &generator)
         case .heatRed:
             return Double.random(in: 6.5 ... 9.5, using: &generator)
-        case .none, .coldYellow, .coldOrange, .coldRed:
+        case .none:
             return Double.random(in: 2.0 ... 4.9, using: &generator)
         }
     }
@@ -131,9 +139,8 @@ enum MockSnapshotFactory {
 
         let startOfDay = calendar.startOfDay(for: date)
         let isAllDay = severity == .heatRed && Bool.random(using: &generator)
-        if isAllDay,
-           let endOfDay = calendar.date(byAdding: DateComponents(day: 1, second: -1), to: startOfDay) {
-            return [WarningTimeRange(start: startOfDay, end: endOfDay)]
+        if isAllDay, let nextDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) {
+            return [WarningTimeRange(start: startOfDay, end: nextDay)]
         }
 
         let startHourRange: ClosedRange<Int>
@@ -149,7 +156,7 @@ enum MockSnapshotFactory {
         case .heatRed:
             startHourRange = 11 ... 13
             durationRange = 5 ... 8
-        case .none, .coldYellow, .coldOrange, .coldRed:
+        case .none:
             return []
         }
 
@@ -168,11 +175,6 @@ enum MockSnapshotFactory {
         return [WarningTimeRange(start: start, end: end)]
     }
 
-    private static func gregorianViennaCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "Europe/Vienna") ?? .current
-        return calendar
-    }
 }
 
 private struct SeededGenerator: RandomNumberGenerator {

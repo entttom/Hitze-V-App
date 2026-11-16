@@ -1,9 +1,9 @@
 package org.entner.HitzeV.data
 
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -16,12 +16,12 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import org.entner.HitzeV.config.AppFeatureFlags
 import org.entner.HitzeV.model.DailyForecast
 import org.entner.HitzeV.model.GeoCoordinate
 import org.entner.HitzeV.model.HazardSeverity
 import org.entner.HitzeV.model.WarningTimeRange
 import org.entner.HitzeV.model.WorksiteSnapshot
+import org.entner.HitzeV.model.normalizeMunicipalityId
 import java.net.HttpURLConnection
 import java.net.URL
 import java.time.Instant
@@ -31,32 +31,34 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import java.util.Locale
+import kotlin.coroutines.cancellation.CancellationException
 
 class DashboardDataService(
-    private val appStorage: AppStorage
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
     private val json = Json { ignoreUnknownKeys = true }
-    private val defaultGeosphereBaseUrl = "https://warnungen.zamg.at/wsapp/api/getWarningsForCoords"
+    private val geosphereBaseUrl = "https://warnungen.zamg.at/wsapp/api/getWarningsForCoords"
     private val openMeteoBaseUrl = "https://api.open-meteo.com/v1/forecast"
     private val viennaZoneId = ZoneId.of("Europe/Vienna")
 
+    /**
+     * GeoSphere is required (warnings); Open-Meteo is optional so an outage there never hides a
+     * heat warning or blocks adding a worksite — its values are then null.
+     */
     suspend fun fetchSnapshot(coordinate: GeoCoordinate): WorksiteSnapshot = coroutineScope {
         val geoSphereResult = async { fetchGeoSphere(coordinate) }
-        val openMeteoResult = async { fetchOpenMeteo(coordinate) }
+        val openMeteoResult = async { fetchOpenMeteoOrNull(coordinate) }
 
         val geoResult = geoSphereResult.await()
-        val meteoResult = openMeteoResult.await()
+        val meteoDaily = openMeteoResult.await()?.daily ?: OpenMeteoDaily()
 
         val today = LocalDate.now(viennaZoneId)
         val forecasts = (0..3).map { offset ->
             val date = today.plusDays(offset.toLong())
             val severity = highestHazardSeverity(date, geoResult.warnings)
             val warningTimeRanges = warningTimeRangesForDate(date, geoResult.warnings)
-            val uvIndex = meteoResult.daily.uvIndexMax.getOrNull(offset)
-            val apparentTemperature = minimumApparentTemperatureForSeverity(
-                meteoResult.daily.apparentTemperatureMax.getOrNull(offset),
-                severity
-            )
+            val uvIndex = meteoDaily.uvIndexMax.getOrNull(offset)
+            val apparentTemperature = meteoDaily.apparentTemperatureMax.getOrNull(offset)
 
             DailyForecast(
                 id = date.toString(),
@@ -80,16 +82,7 @@ class DashboardDataService(
         )
     }
 
-    suspend fun resolveMunicipalityForCoordinate(coordinate: GeoCoordinate): ResolvedMunicipality {
-        return fetchGeoSphere(coordinate)
-    }
-
     private suspend fun fetchGeoSphere(coordinate: GeoCoordinate): ResolvedMunicipality {
-        val geosphereBaseUrl = if (AppFeatureFlags.enableCustomGeoSphereUrlSetting) {
-            appStorage.customGeoSphereUrl.first().ifBlank { defaultGeosphereBaseUrl }
-        } else {
-            defaultGeosphereBaseUrl
-        }
         val url = "$geosphereBaseUrl?lat=${coordinate.latitude.asQueryValue()}&lon=${coordinate.longitude.asQueryValue()}"
         val root = performGet(url)
 
@@ -105,6 +98,8 @@ class DashboardDataService(
             ?.jsonObject ?: throw DashboardDataError.InvalidGeoSphereResponse
 
         val municipalityId = municipalityProperties["gemeindenr"].municipalityValue()
+            ?.let(::normalizeMunicipalityId)
+            ?.takeIf { it.isNotEmpty() }
             ?: throw DashboardDataError.InvalidGeoSphereResponse
         val municipalityName = municipalityProperties["name"].asStringOrNull() ?: "Gemeinde $municipalityId"
 
@@ -118,6 +113,15 @@ class DashboardDataService(
             warnings = warnings
         )
     }
+
+    private suspend fun fetchOpenMeteoOrNull(coordinate: GeoCoordinate): OpenMeteoForecastResponse? =
+        try {
+            fetchOpenMeteo(coordinate)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        }
 
     private suspend fun fetchOpenMeteo(coordinate: GeoCoordinate): OpenMeteoForecastResponse {
         val url = buildString {
@@ -133,7 +137,7 @@ class DashboardDataService(
         return json.decodeFromString(root.toString())
     }
 
-    private suspend fun performGet(urlString: String): JsonObject = withContext(Dispatchers.IO) {
+    private suspend fun performGet(urlString: String): JsonObject = withContext(ioDispatcher) {
         val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10_000
@@ -157,6 +161,8 @@ class DashboardDataService(
             val body = connection.inputStream.bufferedReader().use { it.readText() }
             json.parseToJsonElement(body).jsonObject
         } catch (error: DashboardDataError) {
+            throw error
+        } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
             throw DashboardDataError.Network(error.localizedMessage ?: "Unknown network error")
@@ -195,7 +201,7 @@ class DashboardDataService(
         )
     }
 
-    data class ResolvedMunicipality(
+    private data class ResolvedMunicipality(
         val municipalityId: String,
         val municipalityName: String,
         val warnings: List<GeoSphereWarning>
@@ -299,20 +305,6 @@ class DashboardDataService(
                 }
         }
 
-        internal fun minimumApparentTemperatureForSeverity(
-            value: Double?,
-            severity: HazardSeverity
-        ): Double? {
-            val minimumValue = when (severity) {
-                HazardSeverity.HEAT_YELLOW -> 30.0
-                HazardSeverity.HEAT_ORANGE -> 35.0
-                HazardSeverity.HEAT_RED -> 40.0
-                else -> return value?.coerceAtMost(29.0)
-            }
-
-            return maxOf(value ?: minimumValue, minimumValue)
-        }
-
         private fun heatWarningsForDate(
             targetDate: LocalDate,
             warnings: List<GeoSphereWarning>,
@@ -360,7 +352,6 @@ class DashboardDataService(
 }
 
 sealed class DashboardDataError(message: String) : Exception(message) {
-    data object InvalidRequest : DashboardDataError("Ungueltige Anfrageparameter.")
     data object InvalidGeoSphereResponse : DashboardDataError("GeoSphere Antwort konnte nicht gelesen werden.")
     data class MunicipalityNotFound(val detail: String) : DashboardDataError("Gemeinde nicht gefunden: $detail")
     data class Network(val detail: String) : DashboardDataError("Netzwerkfehler: $detail")

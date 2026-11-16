@@ -1,373 +1,496 @@
 package org.entner.HitzeV
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import org.entner.HitzeV.config.AppFeatureFlags
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.entner.HitzeV.data.AppStorage
 import org.entner.HitzeV.data.DashboardDataError
 import org.entner.HitzeV.data.DashboardDataService
-import org.entner.HitzeV.data.FirebaseRegistrationManager
 import org.entner.HitzeV.data.NominatimSearchResult
 import org.entner.HitzeV.data.NominatimSearchService
-import org.entner.HitzeV.data.SubscriptionManager
 import org.entner.HitzeV.model.AddressSearchResult
 import org.entner.HitzeV.model.AppLanguage
 import org.entner.HitzeV.model.AppTheme
 import org.entner.HitzeV.model.Worksite
 import org.entner.HitzeV.model.WorksiteSnapshot
+import org.entner.HitzeV.model.normalizeMunicipalityId
+import org.entner.HitzeV.push.PushSyncResult
+import org.entner.HitzeV.ui.AppLocales
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import kotlin.coroutines.cancellation.CancellationException
 
-class DashboardViewModel(application: Application) : AndroidViewModel(application) {
-    private val appStorage = AppStorage(application)
-    private val dashboardDataService = DashboardDataService(appStorage)
-    private val firebaseRegistrationManager = FirebaseRegistrationManager(application)
-    private val nominatimSearchService = NominatimSearchService(application)
-    private val subscriptionManager = SubscriptionManager(appStorage, dashboardDataService, firebaseRegistrationManager)
+class DashboardViewModel(
+    private val appStorage: AppStorage,
+    private val pushSync: suspend (desiredGkz: Set<String>, enabled: Boolean, complete: Boolean) -> PushSyncResult,
+    /** Outlives the screen, so leaving the dashboard does not cancel a running topic sync. */
+    private val pushScope: CoroutineScope,
+    private val dataService: DashboardDataService,
+    private val nominatimService: NominatimSearchService,
+    private val savedStateHandle: SavedStateHandle,
+    private val currentAppLocale: () -> AppLanguage,
+    private val applyAppLocale: (AppLanguage) -> Unit,
+    private val clock: Clock = Clock.systemUTC()
+) : ViewModel() {
 
-    private var hasLoaded = false
+    private val _uiState = MutableStateFlow(
+        DashboardUiState(
+            today = viennaDate(clock.instant()),
+            addForm = AddWorkplaceFormState(
+                nameInput = savedStateHandle[KEY_NAME_INPUT] ?: "",
+                addressQuery = savedStateHandle[KEY_ADDRESS_QUERY] ?: ""
+            )
+        )
+    )
+    val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
-    private val _uiState = kotlinx.coroutines.flow.MutableStateFlow(DashboardUiState())
-    val uiState: kotlinx.coroutines.flow.MutableStateFlow<DashboardUiState> = _uiState
+    private val _effects = Channel<DashboardEffect>(Channel.BUFFERED)
+    val effects: Flow<DashboardEffect> = _effects.receiveAsFlow()
+
+    private val worksitesMutex = Mutex()
+    private val syncMutex = Mutex()
+    private var refreshJob: Job? = null
+    private var searchJob: Job? = null
+    private var addJob: Job? = null
 
     init {
         observeStoredState()
     }
 
-    fun refreshIfNeeded() {
-        if (hasLoaded) return
-        hasLoaded = true
-        refreshAll()
+    fun onResume(notificationsAllowed: Boolean) {
+        _uiState.update { it.copy(notificationsAllowed = notificationsAllowed, today = viennaDate(clock.instant())) }
+        val state = _uiState.value
+        if (state.preferencesLoaded && needsRefresh(state, clock.instant())) {
+            refresh()
+        }
     }
 
-    fun refreshAll() {
-        if (_uiState.value.isRefreshing) return
+    fun refresh() {
+        if (refreshJob?.isActive == true) return
+        refreshJob = viewModelScope.launch { performRefresh(_uiState.value.worksites) }
+    }
 
-        viewModelScope.launch {
-            _uiState.update { it.copy(isRefreshing = true) }
+    fun retryWorksite(worksiteId: String) {
+        if (refreshJob?.isActive == true) return
+        val worksite = _uiState.value.worksites.firstOrNull { it.id == worksiteId } ?: return
+        refreshJob = viewModelScope.launch { performRefresh(listOf(worksite)) }
+    }
 
-            val currentState = _uiState.value
-            val worksites = currentState.worksites
-            val nextSnapshots = _uiState.value.snapshots.toMutableMap()
+    fun onNotificationOpened(municipalityId: String) {
+        _uiState.update { it.copy(highlightedMunicipalityId = normalizeMunicipalityId(municipalityId)) }
+        if (_uiState.value.preferencesLoaded) {
+            refresh()
+        }
+    }
 
-            worksites.forEach { worksite ->
-                runCatching { dashboardDataService.fetchSnapshot(worksite.coordinate) }
-                    .onSuccess { snapshot ->
-                        nextSnapshots[worksite.id] = snapshot
-                    }
-                    .onFailure { }
-            }
+    fun onHighlightConsumed() {
+        _uiState.update { it.copy(highlightedMunicipalityId = null) }
+    }
 
-            reconcilePushSubscriptions(
-                state = currentState.copy(worksites = worksites),
-                forceUnsubscribeWhenDisabled = true
-            )
+    fun resetAddForm() {
+        searchJob?.cancel()
+        if (addJob?.isActive == true) return
+        setFormInputs(name = "", address = "")
+        _uiState.update { it.copy(addForm = AddWorkplaceFormState()) }
+    }
 
+    fun updateNameInput(value: String) {
+        savedStateHandle[KEY_NAME_INPUT] = value
+        _uiState.update { it.copy(addForm = it.addForm.copy(nameInput = value)) }
+    }
+
+    fun updateAddressQuery(value: String) {
+        savedStateHandle[KEY_ADDRESS_QUERY] = value
+        _uiState.update { it.copy(addForm = it.addForm.copy(addressQuery = value)) }
+    }
+
+    fun searchAddress() {
+        val form = _uiState.value.addForm
+        if (form.isSearching || form.isAdding) return
+        val query = form.addressQuery.trim()
+        if (query.isEmpty()) {
             _uiState.update {
-                it.copy(
-                    snapshots = nextSnapshots,
-                    isRefreshing = false
-                )
+                it.copy(addForm = it.addForm.copy(results = emptyList(), message = AddressSearchMessage.ENTER_ADDRESS))
+            }
+            return
+        }
+
+        _uiState.update { it.copy(addForm = it.addForm.copy(isSearching = true, message = null)) }
+        val languageTag = _uiState.value.appLanguage.resolvedLanguage().localeTag
+        searchJob = viewModelScope.launch {
+            val result = nominatimService.search(query, languageTag)
+            _uiState.update { state ->
+                val nextForm = when (result) {
+                    is NominatimSearchResult.Success -> state.addForm.copy(
+                        results = result.results,
+                        message = if (result.results.isEmpty()) AddressSearchMessage.NO_RESULTS else null,
+                        isSearching = false
+                    )
+                    is NominatimSearchResult.Failure -> state.addForm.copy(
+                        results = emptyList(),
+                        message = AddressSearchMessage.SEARCH_FAILED,
+                        isSearching = false
+                    )
+                }
+                state.copy(addForm = nextForm)
             }
         }
     }
 
-    fun updateNameInput(value: String) {
-        _uiState.update { it.copy(nameInput = value) }
-    }
+    fun addWorksite(result: AddressSearchResult) {
+        if (_uiState.value.addForm.isAdding) return
+        _uiState.update { it.copy(addForm = it.addForm.copy(addingResultId = result.id, addError = null)) }
 
-    fun updateAddressQuery(value: String) {
-        _uiState.update { it.copy(addressQuery = value) }
-    }
-
-    fun searchAddress() {
-        performAddressSearch(_uiState.value.addressQuery)
-    }
-
-    fun addWorksite(result: AddressSearchResult, onComplete: () -> Unit = {}) {
-        viewModelScope.launch {
-            val currentState = _uiState.value
-            val copy = currentCopy()
-            val trimmedName = currentState.nameInput.trim()
-            val worksite = Worksite(
-                name = if (trimmedName.isNotEmpty()) trimmedName else result.title,
+        addJob = viewModelScope.launch {
+            val trimmedName = _uiState.value.addForm.nameInput.trim()
+            val draft = Worksite(
+                name = trimmedName.ifEmpty { result.title },
                 address = result.subtitle,
                 latitude = result.latitude,
                 longitude = result.longitude
             )
 
-            val validationError = runCatching {
-                dashboardDataService.fetchSnapshot(worksite.coordinate)
-            }.exceptionOrNull()
-
-            if (validationError != null) {
-                _uiState.update {
-                    it.copy(
-                        addressSearchMessage = when (validationError) {
-                            is DashboardDataError.MunicipalityNotFound -> copy.addOutsideAustriaMessage
-                            is DashboardDataError.Network -> copy.liveDataUnavailableMessage
-                            else -> copy.workplaceCouldNotBeAddedMessage
-                        }
-                    )
+            val snapshot = try {
+                dataService.fetchSnapshot(draft.coordinate)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                val addError = when (error) {
+                    is DashboardDataError.MunicipalityNotFound -> AddWorksiteError.OUTSIDE_AUSTRIA
+                    is DashboardDataError.Network -> AddWorksiteError.NETWORK
+                    else -> AddWorksiteError.OTHER
                 }
+                _uiState.update { it.copy(addForm = it.addForm.copy(addingResultId = null, addError = addError)) }
                 return@launch
             }
 
-            val updatedWorksites = currentState.worksites + worksite
-            appStorage.saveWorksites(updatedWorksites)
+            val worksite = draft.copy(municipalityId = snapshot.municipalityId)
             _uiState.update {
-                it.copy(
-                    nameInput = "",
-                    addressQuery = "",
-                    addressResults = emptyList(),
-                    addressSearchMessage = null
-                )
+                it.copy(loads = it.loads + (worksite.id to WorksiteLoad(LoadStatus.LOADED, snapshot)))
             }
-            refreshAll()
-            onComplete()
+            worksitesMutex.withLock {
+                appStorage.saveWorksites(appStorage.worksites.first() + worksite)
+            }
+            setFormInputs(name = "", address = "")
+            _uiState.update { it.copy(addForm = AddWorkplaceFormState()) }
+            _effects.send(DashboardEffect.WorksiteAdded)
+            syncPush()
         }
+    }
+
+    fun dismissAddError() {
+        _uiState.update { it.copy(addForm = it.addForm.copy(addError = null)) }
     }
 
     fun deleteWorksite(id: String) {
         viewModelScope.launch {
-            val currentState = _uiState.value
-            val updatedWorksites = currentState.worksites.filterNot { it.id == id }
-            val updatedSnapshots = _uiState.value.snapshots - id
-            val updatedDisabledPushWorksiteIds = currentState.disabledPushWorksiteIds - id
-            appStorage.saveWorksites(updatedWorksites)
-            appStorage.saveDisabledPushWorksiteIds(updatedDisabledPushWorksiteIds)
-
-            reconcilePushSubscriptions(
-                state = currentState.copy(
-                    worksites = updatedWorksites,
-                    disabledPushWorksiteIds = updatedDisabledPushWorksiteIds
-                ),
-                forceUnsubscribeWhenDisabled = true
-            )
-
-            _uiState.update {
-                it.copy(
-                    snapshots = updatedSnapshots
-                )
+            worksitesMutex.withLock {
+                appStorage.saveWorksites(appStorage.worksites.first().filterNot { it.id == id })
+                appStorage.saveDisabledPushWorksiteIds(appStorage.disabledPushWorksiteIds.first() - id)
             }
+            _uiState.update { it.copy(loads = it.loads - id) }
+            syncPush()
         }
     }
 
     fun setTheme(theme: AppTheme) {
-        viewModelScope.launch {
-            appStorage.saveAppTheme(theme)
-        }
+        viewModelScope.launch { appStorage.saveAppTheme(theme) }
     }
 
     fun setLanguage(language: AppLanguage) {
         viewModelScope.launch {
+            // Stored first: the push service renders notifications in this language.
             appStorage.saveAppLanguage(language)
-            if (_uiState.value.isPushEnabled) {
-                reconcilePushSubscriptions(_uiState.value.copy(appLanguage = language))
-            }
-        }
-    }
-
-    fun setCustomGeoSphereUrl(url: String) {
-        if (!AppFeatureFlags.enableCustomGeoSphereUrlSetting) return
-        viewModelScope.launch {
-            appStorage.saveCustomGeoSphereUrl(url)
+            applyAppLocale(language)
         }
     }
 
     fun setPushNotificationsEnabled(enabled: Boolean) {
         viewModelScope.launch {
-            val currentState = _uiState.value
             appStorage.savePushNotificationsEnabled(enabled)
-            reconcilePushSubscriptions(
-                state = currentState.copy(isPushEnabled = enabled),
-                forceUnsubscribeWhenDisabled = true
-            )
+            syncPush()
         }
     }
 
     fun setWorksitePushEnabled(worksiteId: String, enabled: Boolean) {
         viewModelScope.launch {
-            val currentState = _uiState.value
-            val updatedDisabledIds = if (enabled) {
-                currentState.disabledPushWorksiteIds - worksiteId
-            } else {
-                currentState.disabledPushWorksiteIds + worksiteId
+            worksitesMutex.withLock {
+                val current = appStorage.disabledPushWorksiteIds.first()
+                appStorage.saveDisabledPushWorksiteIds(if (enabled) current - worksiteId else current + worksiteId)
             }
-            appStorage.saveDisabledPushWorksiteIds(updatedDisabledIds)
-            reconcilePushSubscriptions(
-                state = currentState.copy(disabledPushWorksiteIds = updatedDisabledIds),
-                forceUnsubscribeWhenDisabled = false
-            )
+            syncPush()
         }
     }
 
-    fun isPushEnabledForWorksite(worksiteId: String): Boolean =
-        worksiteId !in _uiState.value.disabledPushWorksiteIds
-
-    fun completeOnboarding(skipPushRegistration: Boolean) {
+    fun completeOnboarding() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isRequestingNotifications = !skipPushRegistration) }
-
-            if (!skipPushRegistration) {
-                runCatching { firebaseRegistrationManager.registerForPushNotificationsIfNeeded() }
-            }
-
             appStorage.saveHasCompletedOnboarding(true)
-            _uiState.update { it.copy(isRequestingNotifications = false) }
+            syncPush()
+        }
+    }
+
+    private suspend fun performRefresh(targets: List<Worksite>) {
+        val now = clock.instant()
+        _uiState.update { state ->
+            state.copy(
+                isRefreshing = true,
+                today = viennaDate(now),
+                loads = state.loads + targets.associate { worksite ->
+                    worksite.id to WorksiteLoad(LoadStatus.LOADING, state.loads[worksite.id]?.snapshot)
+                }
+            )
+        }
+
+        val results = coroutineScope {
+            targets.map { worksite ->
+                async {
+                    val snapshot = try {
+                        dataService.fetchSnapshot(worksite.coordinate)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        null
+                    }
+                    _uiState.update { state ->
+                        val previous = state.loads[worksite.id]?.snapshot
+                        val load = if (snapshot != null) {
+                            WorksiteLoad(LoadStatus.LOADED, snapshot)
+                        } else {
+                            WorksiteLoad(LoadStatus.FAILED, previous)
+                        }
+                        state.copy(loads = state.loads + (worksite.id to load))
+                    }
+                    worksite.id to snapshot
+                }
+            }.awaitAll()
+        }
+
+        _uiState.update { it.copy(isRefreshing = false) }
+        if (results.any { it.second == null }) {
+            _effects.send(DashboardEffect.RefreshFailed)
+        }
+
+        val municipalityIds = results.mapNotNull { (id, snapshot) -> snapshot?.let { id to it.municipalityId } }.toMap()
+        persistMunicipalityIds(municipalityIds)
+        syncPush()
+    }
+
+    private suspend fun persistMunicipalityIds(municipalityIds: Map<String, String>) {
+        if (municipalityIds.isEmpty()) return
+        worksitesMutex.withLock {
+            val stored = appStorage.worksites.first()
+            val updated = mergeMunicipalityIds(stored, municipalityIds)
+            if (updated != stored) {
+                appStorage.saveWorksites(updated)
+            }
+        }
+    }
+
+    private fun syncPush(): Job = pushScope.launch {
+        syncMutex.withLock {
+            val enabled = appStorage.isPushNotificationsEnabled.first()
+            val request = pushSyncRequest(appStorage.worksites.first(), appStorage.disabledPushWorksiteIds.first())
+            val result = try {
+                pushSync(request.knownGkz, enabled, request.complete)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                PushSyncResult(failedGkz = request.knownGkz, errorMessage = error.message ?: error.javaClass.simpleName)
+            }
+            _uiState.update {
+                it.copy(pushSyncFailed = result.failedGkz.isNotEmpty() || result.errorMessage != null)
+            }
         }
     }
 
     private fun observeStoredState() {
         viewModelScope.launch {
-            val baseStoredState = combine(
-                appStorage.worksites,
+            val appearance = combine(
                 appStorage.appLanguage,
                 appStorage.appTheme,
-                appStorage.hasCompletedOnboarding,
-                appStorage.customGeoSphereUrl
-            ) { worksites, appLanguage, appTheme, hasCompletedOnboarding, customGeoSphereUrl ->
-                BaseStoredState(
-                    worksites = worksites,
-                    appLanguage = appLanguage,
-                    appTheme = appTheme,
-                    hasCompletedOnboarding = hasCompletedOnboarding,
-                    customGeoSphereUrl = customGeoSphereUrl
-                )
-            }
+                appStorage.hasCompletedOnboarding
+            ) { language, theme, onboarded -> Triple(language, theme, onboarded) }
 
-            combine(
-                baseStoredState,
+            val push = combine(
                 appStorage.isPushNotificationsEnabled,
                 appStorage.disabledPushWorksiteIds
-            ) { baseState, isPushEnabled, disabledPushWorksiteIds ->
-                StoredState(
-                    worksites = baseState.worksites,
-                    appLanguage = baseState.appLanguage,
-                    appTheme = baseState.appTheme,
-                    hasCompletedOnboarding = baseState.hasCompletedOnboarding,
-                    customGeoSphereUrl = baseState.customGeoSphereUrl,
-                    isPushEnabled = isPushEnabled,
-                    disabledPushWorksiteIds = disabledPushWorksiteIds
-                )
-            }.collect { storedState ->
-                _uiState.update {
-                    it.copy(
-                        worksites = storedState.worksites,
-                        appLanguage = storedState.appLanguage,
-                        appTheme = storedState.appTheme,
-                        hasCompletedOnboarding = storedState.hasCompletedOnboarding,
-                        showsCustomGeoSphereUrlSetting = AppFeatureFlags.enableCustomGeoSphereUrlSetting,
-                        customGeoSphereUrl = storedState.customGeoSphereUrl,
-                        isPushEnabled = storedState.isPushEnabled,
-                        disabledPushWorksiteIds = storedState.disabledPushWorksiteIds
+            ) { enabled, disabledIds -> enabled to disabledIds }
+
+            var isFirstEmission = true
+            combine(appStorage.worksites, appearance, push) { worksites, (language, theme, onboarded), (pushEnabled, disabledIds) ->
+                StoredState(worksites, language, theme, onboarded, pushEnabled, disabledIds)
+            }.collect { stored ->
+                _uiState.update { state ->
+                    state.copy(
+                        preferencesLoaded = true,
+                        worksites = stored.worksites,
+                        loads = state.loads.filterKeys { id -> stored.worksites.any { it.id == id } },
+                        appLanguage = stored.language,
+                        appTheme = stored.theme,
+                        hasCompletedOnboarding = stored.hasCompletedOnboarding,
+                        isPushEnabled = stored.isPushEnabled,
+                        disabledPushWorksiteIds = stored.disabledPushWorksiteIds
                     )
                 }
-            }
-        }
-    }
-
-    private suspend fun reconcilePushSubscriptions(
-        state: DashboardUiState,
-        forceUnsubscribeWhenDisabled: Boolean = false
-    ) {
-        val error = when {
-            !state.isPushEnabled && forceUnsubscribeWhenDisabled -> subscriptionManager.unsubscribeAll()
-            !state.isPushEnabled -> null
-            else -> subscriptionManager.syncTopics(
-                activePushWorksites(state).map(Worksite::coordinate),
-                state.appLanguage.resolvedLanguage().code
-            )
-        }
-
-        if (error != null) {
-            // Keep failures silent in UI for now, matching existing behavior.
-        }
-    }
-
-    private fun activePushWorksites(state: DashboardUiState): List<Worksite> =
-        state.worksites.filter { it.id !in state.disabledPushWorksiteIds }
-
-    private fun performAddressSearch(query: String) {
-        viewModelScope.launch {
-            val trimmedQuery = query.trim()
-            val copy = currentCopy()
-
-            if (trimmedQuery.isEmpty()) {
-                _uiState.update {
-                    it.copy(
-                        addressResults = emptyList(),
-                        addressSearchMessage = copy.enterAddressMessage,
-                        isSearchingAddress = false
-                    )
-                }
-                return@launch
-            }
-
-            _uiState.update { it.copy(isSearchingAddress = true, addressSearchMessage = null) }
-
-            when (val searchResult = nominatimSearchService.search(trimmedQuery)) {
-                is NominatimSearchResult.Success -> {
-                    _uiState.update {
-                        it.copy(
-                            addressResults = searchResult.results,
-                            addressSearchMessage = if (searchResult.results.isEmpty()) copy.noAddressFoundMessage else null,
-                            isSearchingAddress = false
-                        )
-                    }
-                }
-
-                is NominatimSearchResult.Failure -> {
-                    _uiState.update {
-                        it.copy(
-                            addressResults = emptyList(),
-                            addressSearchMessage = copy.addressSearchFailedMessage,
-                            isSearchingAddress = false
-                        )
-                    }
+                if (isFirstEmission) {
+                    isFirstEmission = false
+                    reconcileAppLocale(stored.language)
+                    refresh()
                 }
             }
         }
     }
 
-    private fun currentCopy() = org.entner.HitzeV.ui.copy.Copybook(_uiState.value.appLanguage.resolvedLanguage())
+    private suspend fun reconcileAppLocale(stored: AppLanguage) {
+        val current = currentAppLocale()
+        if (current == stored) return
+        if (current == AppLanguage.SYSTEM) {
+            // Older installs kept the choice only in storage; below API 33 AppCompat may also
+            // have lost it after process death.
+            applyAppLocale(stored)
+        } else {
+            appStorage.saveAppLanguage(current)
+        }
+    }
+
+    private fun setFormInputs(name: String, address: String) {
+        savedStateHandle[KEY_NAME_INPUT] = name
+        savedStateHandle[KEY_ADDRESS_QUERY] = address
+    }
 
     private data class StoredState(
         val worksites: List<Worksite>,
-        val appLanguage: AppLanguage,
-        val appTheme: AppTheme,
+        val language: AppLanguage,
+        val theme: AppTheme,
         val hasCompletedOnboarding: Boolean,
-        val customGeoSphereUrl: String,
         val isPushEnabled: Boolean,
         val disabledPushWorksiteIds: Set<String>
     )
 
-    private data class BaseStoredState(
-        val worksites: List<Worksite>,
-        val appLanguage: AppLanguage,
-        val appTheme: AppTheme,
-        val hasCompletedOnboarding: Boolean,
-        val customGeoSphereUrl: String
-    )
+    companion object {
+        private const val KEY_NAME_INPUT = "addWorkplace.name"
+        private const val KEY_ADDRESS_QUERY = "addWorkplace.address"
+        private val REFRESH_INTERVAL: Duration = Duration.ofMinutes(10)
+        val VIENNA: ZoneId = ZoneId.of("Europe/Vienna")
+
+        fun viennaDate(instant: Instant): LocalDate = instant.atZone(VIENNA).toLocalDate()
+
+        /** A worksite whose GKZ is not known yet makes the request incomplete instead of blocking it. */
+        internal fun pushSyncRequest(worksites: List<Worksite>, disabledIds: Set<String>): PushSyncRequest {
+            val pushWorksites = worksites.filter { it.id !in disabledIds }
+            val known = pushWorksites.mapNotNull { worksite -> worksite.municipalityId?.takeIf { it.isNotBlank() } }
+            return PushSyncRequest(knownGkz = known.toSet(), complete = known.size == pushWorksites.size)
+        }
+
+        /** Fills in the GKZ of every worksite that loaded, independently of the ones that failed. */
+        internal fun mergeMunicipalityIds(stored: List<Worksite>, municipalityIds: Map<String, String>): List<Worksite> =
+            stored.map { worksite ->
+                municipalityIds[worksite.id]?.takeIf { it.isNotBlank() }?.let { worksite.copy(municipalityId = it) }
+                    ?: worksite
+            }
+
+        internal fun needsRefresh(state: DashboardUiState, now: Instant): Boolean {
+            if (state.worksites.isEmpty()) return false
+            return state.worksites.any { worksite ->
+                val load = state.loads[worksite.id]
+                val updatedAt = load?.snapshot?.updatedAt
+                load?.status != LoadStatus.LOADED ||
+                    updatedAt == null ||
+                    Duration.between(updatedAt, now) >= REFRESH_INTERVAL ||
+                    viennaDate(updatedAt) != viennaDate(now)
+            } && state.loads.values.none { it.status == LoadStatus.LOADING }
+        }
+
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+            initializer {
+                val application = checkNotNull(this[APPLICATION_KEY])
+                val container = application.appContainer
+                DashboardViewModel(
+                    appStorage = container.appStorage,
+                    pushSync = { desired, enabled, complete ->
+                        container.subscriptionManager.sync(desired, enabled, complete)
+                    },
+                    pushScope = container.applicationScope,
+                    dataService = DashboardDataService(),
+                    nominatimService = NominatimSearchService(),
+                    savedStateHandle = createSavedStateHandle(),
+                    currentAppLocale = AppLocales::current,
+                    applyAppLocale = AppLocales::apply
+                )
+            }
+        }
+    }
+}
+
+internal data class PushSyncRequest(val knownGkz: Set<String>, val complete: Boolean)
+
+enum class LoadStatus { LOADING, LOADED, FAILED }
+
+data class WorksiteLoad(
+    val status: LoadStatus,
+    val snapshot: WorksiteSnapshot? = null
+)
+
+enum class AddressSearchMessage { ENTER_ADDRESS, NO_RESULTS, SEARCH_FAILED }
+
+enum class AddWorksiteError { OUTSIDE_AUSTRIA, NETWORK, OTHER }
+
+data class AddWorkplaceFormState(
+    val nameInput: String = "",
+    val addressQuery: String = "",
+    val results: List<AddressSearchResult> = emptyList(),
+    val message: AddressSearchMessage? = null,
+    val isSearching: Boolean = false,
+    val addingResultId: String? = null,
+    val addError: AddWorksiteError? = null
+) {
+    val isAdding: Boolean get() = addingResultId != null
+    val canSearch: Boolean get() = addressQuery.isNotBlank() && !isSearching && !isAdding
 }
 
 data class DashboardUiState(
+    val preferencesLoaded: Boolean = false,
     val worksites: List<Worksite> = emptyList(),
-    val addressQuery: String = "",
-    val nameInput: String = "",
-    val addressResults: List<AddressSearchResult> = emptyList(),
-    val addressSearchMessage: String? = null,
-    val isSearchingAddress: Boolean = false,
-    val snapshots: Map<String, WorksiteSnapshot> = emptyMap(),
+    val loads: Map<String, WorksiteLoad> = emptyMap(),
     val isRefreshing: Boolean = false,
+    val today: LocalDate = LocalDate.now(DashboardViewModel.VIENNA),
     val appLanguage: AppLanguage = AppLanguage.SYSTEM,
     val appTheme: AppTheme = AppTheme.SYSTEM,
-    val hasCompletedOnboarding: Boolean = false,
-    val isRequestingNotifications: Boolean = false,
-    val showsCustomGeoSphereUrlSetting: Boolean = false,
-    val customGeoSphereUrl: String = "",
+    val hasCompletedOnboarding: Boolean? = null,
     val isPushEnabled: Boolean = true,
-    val disabledPushWorksiteIds: Set<String> = emptySet()
+    val disabledPushWorksiteIds: Set<String> = emptySet(),
+    val notificationsAllowed: Boolean = true,
+    val pushSyncFailed: Boolean = false,
+    val highlightedMunicipalityId: String? = null,
+    val addForm: AddWorkplaceFormState = AddWorkplaceFormState()
 )
+
+sealed interface DashboardEffect {
+    data object WorksiteAdded : DashboardEffect
+    data object RefreshFailed : DashboardEffect
+}

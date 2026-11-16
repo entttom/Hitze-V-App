@@ -1,16 +1,18 @@
 package org.entner.HitzeV.data
 
 import android.content.Context
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
-import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -19,11 +21,18 @@ import org.entner.HitzeV.model.AppTheme
 import org.entner.HitzeV.model.Worksite
 import java.io.IOException
 
-class AppStorage(context: Context) {
+// One DataStore per process: the delegate caches the instance, so any number of AppStorage
+// wrappers share it. The name already ends in ".preferences_pb" and the delegate appends it again;
+// the on-disk file of existing installs is datastore/hitze_v_app.preferences_pb.preferences_pb.
+private val Context.appPreferencesDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "hitze_v_app.preferences_pb",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
+)
+
+class AppStorage internal constructor(private val dataStore: DataStore<Preferences>) : LegacySubscriptionSource {
+    constructor(context: Context) : this(context.applicationContext.appPreferencesDataStore)
+
     private val json = Json { ignoreUnknownKeys = true }
-    private val dataStore = PreferenceDataStoreFactory.create(
-        produceFile = { context.preferencesDataStoreFile("hitze_v_app.preferences_pb") }
-    )
 
     val worksites: Flow<List<Worksite>> = dataStore.safeData.map { preferences ->
         preferences[Keys.worksites]
@@ -37,6 +46,9 @@ class AppStorage(context: Context) {
     val appLanguage: Flow<AppLanguage> = dataStore.safeData.map { preferences ->
         AppLanguage.fromRawValue(preferences[Keys.language])
     }
+
+    /** Raw stored language ("system" or a language code); null when never set. */
+    val appLanguageRawValue: Flow<String?> = dataStore.safeData.map { preferences -> preferences[Keys.language] }
 
     val appTheme: Flow<AppTheme> = dataStore.safeData.map { preferences ->
         AppTheme.fromRawValue(preferences[Keys.theme])
@@ -54,14 +66,12 @@ class AppStorage(context: Context) {
         preferences[Keys.disabledPushWorksiteIds] ?: emptySet()
     }
 
+    @Deprecated("Pre-v2 push state; SubscriptionManager imports and clears it once.")
     val subscribedMunicipalityIds: Flow<Set<String>> = dataStore.safeData.map { preferences ->
         preferences[Keys.subscribedMunicipalityIds] ?: emptySet()
     }
 
-    val customGeoSphereUrl: Flow<String> = dataStore.safeData.map { preferences ->
-        preferences[Keys.customGeoSphereUrl]?.trim().orEmpty()
-    }
-
+    @Deprecated("Pre-v2 push state; SubscriptionManager imports and clears it once.")
     val lastSubscribedLanguageCode: Flow<String?> = dataStore.safeData.map { preferences ->
         preferences[Keys.lastSubscribedLanguageCode]?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
     }
@@ -102,25 +112,31 @@ class AppStorage(context: Context) {
         }
     }
 
+    @Deprecated("Pre-v2 push state; use SubscriptionManager.sync.")
     suspend fun saveSubscribedMunicipalityIds(ids: Set<String>) {
         dataStore.edit { preferences ->
             preferences[Keys.subscribedMunicipalityIds] = ids
         }
     }
 
-    suspend fun saveCustomGeoSphereUrl(url: String) {
-        dataStore.edit { preferences ->
-            preferences[Keys.customGeoSphereUrl] = url.trim()
-        }
-    }
-
+    @Deprecated("Pre-v2 push state; use SubscriptionManager.sync.")
     suspend fun saveLastSubscribedLanguageCode(languageCode: String) {
         dataStore.edit { preferences ->
             preferences[Keys.lastSubscribedLanguageCode] = languageCode.trim().lowercase()
         }
     }
 
-    private val androidx.datastore.core.DataStore<Preferences>.safeData: Flow<Preferences>
+    override suspend fun readLegacyGkz(): Set<String> =
+        dataStore.safeData.first()[Keys.subscribedMunicipalityIds].orEmpty()
+
+    override suspend fun clearLegacyState() {
+        dataStore.edit { preferences ->
+            preferences.remove(Keys.subscribedMunicipalityIds)
+            preferences.remove(Keys.lastSubscribedLanguageCode)
+        }
+    }
+
+    private val DataStore<Preferences>.safeData: Flow<Preferences>
         get() = data
             .catch { error ->
                 if (error is IOException) emit(emptyPreferences()) else throw error
@@ -134,7 +150,6 @@ class AppStorage(context: Context) {
         val isPushNotificationsEnabled = booleanPreferencesKey("push.notifications.enabled")
         val disabledPushWorksiteIds = stringSetPreferencesKey("push.notifications.disabledWorksiteIds")
         val subscribedMunicipalityIds = stringSetPreferencesKey("subscription_manager.subscribedMunicipalityIDs")
-        val customGeoSphereUrl = stringPreferencesKey("network.customGeoSphereUrl")
         val lastSubscribedLanguageCode = stringPreferencesKey("subscription_manager.lastSubscribedLanguageCode")
     }
 }

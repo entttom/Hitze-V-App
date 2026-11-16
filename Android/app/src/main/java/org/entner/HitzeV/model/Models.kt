@@ -5,27 +5,20 @@ import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
 
-enum class HazardSeverity(val rawValue: Int, val level: Int) {
-    NONE(0, 0),
-    HEAT_YELLOW(11, 2),
-    HEAT_ORANGE(12, 3),
-    HEAT_RED(13, 4),
-    COLD_YELLOW(21, 2),
-    COLD_ORANGE(22, 3),
-    COLD_RED(23, 4);
+enum class HazardSeverity(val level: Int) {
+    NONE(0),
+    HEAT_YELLOW(2),
+    HEAT_ORANGE(3),
+    HEAT_RED(4);
+
+    val isHeatWarning: Boolean
+        get() = this != NONE
 
     companion object {
         fun heat(level: Int): HazardSeverity = when {
             level >= 4 -> HEAT_RED
             level == 3 -> HEAT_ORANGE
             level == 2 -> HEAT_YELLOW
-            else -> NONE
-        }
-
-        fun cold(level: Int): HazardSeverity = when {
-            level >= 4 -> COLD_RED
-            level == 3 -> COLD_ORANGE
-            level == 2 -> COLD_YELLOW
             else -> NONE
         }
     }
@@ -37,13 +30,11 @@ data class Worksite(
     val name: String,
     val address: String? = null,
     val latitude: Double,
-    val longitude: Double
+    val longitude: Double,
+    val municipalityId: String? = null
 ) {
     val coordinate: GeoCoordinate
         get() = GeoCoordinate(latitude = latitude, longitude = longitude)
-
-    val coordinateLabel: String
-        get() = "%.4f, %.4f".format(latitude, longitude)
 }
 
 data class GeoCoordinate(
@@ -82,3 +73,6 @@ data class WorksiteSnapshot(
     val forecasts: List<DailyForecast>,
     val updatedAt: Instant
 )
+
+/** GeoSphere `gemeindenr`, normalised the same way as the backend topic name. */
+fun normalizeMunicipalityId(raw: String): String = raw.replace(Regex("\\s+"), "")

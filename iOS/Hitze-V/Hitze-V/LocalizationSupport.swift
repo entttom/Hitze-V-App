@@ -9,14 +9,10 @@ enum DashboardUserMessage: Equatable {
     case workplaceCouldNotBeAdded
 }
 
-extension UserDefaults {
-    var selectedAppLanguage: AppLanguage {
-        AppLanguage(rawValue: string(forKey: "dashboard.language") ?? AppLanguage.system.rawValue) ?? .system
-    }
-
-    var resolvedAppLanguage: ResolvedLanguage {
-        selectedAppLanguage.resolvedLanguage
-    }
+enum AppSettingsKey {
+    /// Lives in the App Group (`UserDefaults.hitzeShared`) so the Notification Service Extension
+    /// renders pushes in the in-app language.
+    static let language = "dashboard.language"
 }
 
 extension ResolvedLanguage {
@@ -336,23 +332,55 @@ extension Copybook {
             ?? appLanguage.rawValue.uppercased()
     }
 
-    func localizedWeekdayShort(_ weekday: Int) -> String {
-        guard (1...7).contains(weekday) else {
-            return "-"
-        }
-
-        var formatterCalendar = Calendar(identifier: .gregorian)
-        formatterCalendar.locale = Locale(identifier: language.localeIdentifier)
-
-        let formatter = DateFormatter()
-        formatter.calendar = formatterCalendar
-        formatter.locale = formatterCalendar.locale
-
-        let symbols = formatter.shortWeekdaySymbols ?? formatter.veryShortWeekdaySymbols ?? []
-        guard symbols.count == 7 else {
-            return "-"
-        }
-
-        return symbols[weekday - 1].uppercased(with: formatterCalendar.locale)
+    var locale: Locale {
+        Locale(identifier: language.localeIdentifier)
     }
+
+    /// "Mo", "Di" … in the app language; the day is taken in Europe/Vienna because the forecast is.
+    func weekdayShort(_ date: Date) -> String {
+        var style = Date.FormatStyle(date: .omitted, time: .omitted, locale: locale, timeZone: ViennaTime.timeZone)
+        style = style.weekday(.abbreviated)
+        let text = date.formatted(style).trimmingCharacters(in: CharacterSet(charactersIn: ".").union(.whitespaces))
+        guard let first = text.first else { return text }
+        return String(first).uppercased(with: locale) + text.dropFirst()
+    }
+
+    func dayLabel(_ date: Date, now: Date = Date()) -> String {
+        ViennaTime.isToday(date, now: now) ? todayTitle : weekdayShort(date)
+    }
+
+    /// HH:mm in Europe/Vienna for every language (same as the push copy contract).
+    func time(_ date: Date) -> String {
+        Self.timeFormatter.string(from: date)
+    }
+
+    func temperature(_ value: Double?, fractionDigits: Int = 1) -> String {
+        guard let value else { return notAvailableShort }
+        return value.formatted(.number.precision(.fractionLength(fractionDigits)).locale(locale)) + "\u{00A0}°C"
+    }
+
+    func uvValue(_ value: Double?) -> String {
+        guard let value else { return notAvailableShort }
+        return value.formatted(.number.precision(.fractionLength(1)).locale(locale))
+    }
+
+    func uvText(_ value: Double?) -> String {
+        "UV\u{00A0}" + uvValue(value)
+    }
+
+    func spokenTemperature(_ value: Double?) -> String {
+        value == nil ? notAvailableSpoken : temperature(value)
+    }
+
+    func spokenUV(_ value: Double?) -> String {
+        value == nil ? notAvailableSpoken : uvValue(value)
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = ViennaTime.timeZone
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
 }

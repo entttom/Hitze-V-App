@@ -1,25 +1,41 @@
-import { createClient, type RedisClientType } from "redis";
+import { envString } from "./env";
+import { errorMessage } from "./errors";
+import { isRedisConfigured, sharedRedis } from "./redis";
 
 const PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json";
 const PUSHOVER_TIMEOUT_MS = 5_000;
 const PUSHOVER_MAX_FAILED_TARGETS_IN_MESSAGE = 5;
 const PUSHOVER_REPORTS_ENABLED_KEY = "hitze:v1:pushover_reports_enabled";
+const FAILURE_REPORT_INTERVAL_MS = 60 * 60 * 1000;
 
-let settingsRedisClient: RedisClientType | null = null;
-let memoryPushoverReportsEnabled: boolean | null = null;
+let memoryReportsEnabled: boolean | null = null;
+const lastFailureReportAt = new Map<string, number>();
 
-export interface PushoverReportInput {
+export interface PushoverRunReport {
   requestId: string;
   processedWarnings: number;
   affectedMunicipalities: number;
-  sent: number;
-  attempted: number;
-  skippedRateLimited: number;
-  skippedQuietHours: number;
-  failed: number;
-  failedMunicipalities: string[];
+  v2Sent: number;
+  v2Failed: number;
+  legacySent: number;
+  legacyFailed: number;
+  deferredQuietHours: number;
+  deferredRateLimited: number;
   failedTargets: string[];
+  stateWriteFailures: number;
   durationMs: number;
+}
+
+export interface PushoverFailureReport {
+  requestId: string;
+  errorCode: string;
+  message: string;
+}
+
+/** Reporting hooks used by the cron run; never throw. */
+export interface CronReporter {
+  runReport(report: PushoverRunReport): Promise<void>;
+  failureReport(report: PushoverFailureReport): Promise<void>;
 }
 
 interface PushoverConfig {
@@ -36,93 +52,51 @@ export interface PushoverReportStatus {
   persistence: "redis" | "memory";
 }
 
-function getPushoverConfig(): PushoverConfig | null {
-  const appToken = process.env.PUSHOVER_APP_TOKEN?.trim();
-  const userKey = process.env.PUSHOVER_USER_KEY?.trim();
-
+function pushoverConfig(): PushoverConfig | null {
+  const appToken = envString("PUSHOVER_APP_TOKEN");
+  const userKey = envString("PUSHOVER_USER_KEY");
   if (!appToken || !userKey) {
     return null;
   }
-
-  return {
-    appToken,
-    userKey,
-    device: process.env.PUSHOVER_DEVICE?.trim() || undefined,
-  };
+  return { appToken, userKey, device: envString("PUSHOVER_DEVICE") ?? undefined };
 }
 
 export function isPushoverConfigured(): boolean {
-  return getPushoverConfig() !== null;
+  return pushoverConfig() !== null;
 }
 
-function parseBooleanSetting(value: string | undefined): boolean | null {
-  if (!value) {
+function parseBooleanSetting(value: string | null | undefined): boolean | null {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
     return null;
   }
-
-  const normalized = value.trim().toLowerCase();
   if (["1", "true", "yes", "on"].includes(normalized)) {
     return true;
   }
-
   if (["0", "false", "no", "off"].includes(normalized)) {
     return false;
   }
-
   return null;
 }
 
-function defaultPushoverReportsEnabled(): boolean {
+function defaultReportsEnabled(): boolean {
   return parseBooleanSetting(process.env.PUSHOVER_REPORTS_ENABLED) ?? true;
 }
 
-async function getSettingsRedisClient(): Promise<RedisClientType | null> {
-  const redisUrl = process.env.REDIS_URL?.trim();
-  if (!redisUrl) {
-    return null;
+async function readStoredReportsEnabled(): Promise<{ value: boolean | null; persistence: "redis" | "memory" }> {
+  if (!isRedisConfigured()) {
+    return { value: memoryReportsEnabled, persistence: "memory" };
   }
-
-  if (!settingsRedisClient) {
-    settingsRedisClient = createClient({ url: redisUrl });
-    settingsRedisClient.on("error", (error: unknown) => {
-      console.warn("pushover_settings_redis_error", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }
-
-  if (!settingsRedisClient.isOpen) {
-    await settingsRedisClient.connect();
-  }
-
-  return settingsRedisClient;
-}
-
-async function readStoredPushoverReportsEnabled(): Promise<{
-  value: boolean | null;
-  persistence: "redis" | "memory";
-}> {
-  const client = await getSettingsRedisClient();
-  if (!client) {
-    return { value: memoryPushoverReportsEnabled, persistence: "memory" };
-  }
-
-  const stored = await client.get(PUSHOVER_REPORTS_ENABLED_KEY);
-  return {
-    value: parseBooleanSetting(stored ?? undefined),
-    persistence: "redis",
-  };
+  return { value: parseBooleanSetting(await sharedRedis.get(PUSHOVER_REPORTS_ENABLED_KEY)), persistence: "redis" };
 }
 
 export async function getPushoverReportStatus(): Promise<PushoverReportStatus> {
   const configured = isPushoverConfigured();
-  const defaultEnabled = defaultPushoverReportsEnabled();
-  const stored = await readStoredPushoverReportsEnabled();
-  const desiredEnabled = stored.value ?? defaultEnabled;
-
+  const defaultEnabled = defaultReportsEnabled();
+  const stored = await readStoredReportsEnabled();
   return {
     configured,
-    enabled: configured && desiredEnabled,
+    enabled: configured && (stored.value ?? defaultEnabled),
     defaultEnabled,
     storedEnabled: stored.value,
     persistence: stored.persistence,
@@ -130,106 +104,82 @@ export async function getPushoverReportStatus(): Promise<PushoverReportStatus> {
 }
 
 export async function setPushoverReportsEnabled(enabled: boolean): Promise<PushoverReportStatus> {
-  const client = await getSettingsRedisClient();
-
-  if (!client) {
-    memoryPushoverReportsEnabled = enabled;
+  if (isRedisConfigured()) {
+    await sharedRedis.set(PUSHOVER_REPORTS_ENABLED_KEY, enabled ? "true" : "false");
   } else {
-    await client.set(PUSHOVER_REPORTS_ENABLED_KEY, enabled ? "true" : "false");
+    memoryReportsEnabled = enabled;
   }
-
   return getPushoverReportStatus();
 }
 
 function formatDuration(ms: number): string {
-  if (ms < 1000) {
-    return `${ms}ms`;
-  }
-  return `${(ms / 1000).toFixed(1)}s`;
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
-function buildPushoverMessage(input: PushoverReportInput): {
-  title: string;
-  message: string;
-  priority: "0" | "1";
-} {
-  const allOK = input.failed === 0;
-  const title = allOK ? "Hitze-Warnung versendet" : "Hitze-Warnung: Fehler";
-
-  const lines: string[] = [];
-  lines.push(`Warnungen: ${input.processedWarnings}`);
-  lines.push(`Gemeinden: ${input.affectedMunicipalities}`);
-
-  if (allOK) {
-    lines.push(`Pushes: ${input.sent} (alle Sprachen OK)`);
-  } else {
-    lines.push(
-      `Pushes: ${input.sent} / ${input.attempted} — ${input.failed} Fehler in ${input.failedMunicipalities.length} Gemeinden`
-    );
-
-    if (input.failedTargets.length > 0) {
-      lines.push("");
-      lines.push("Fehler (Auszug):");
-      const shown = input.failedTargets.slice(0, PUSHOVER_MAX_FAILED_TARGETS_IN_MESSAGE);
-      for (const target of shown) {
-        lines.push(`  ${target}`);
-      }
-      const remaining = input.failedTargets.length - shown.length;
-      if (remaining > 0) {
-        lines.push(`  +${remaining} mehr`);
-      }
+export function buildRunMessage(input: PushoverRunReport): { title: string; message: string; priority: "0" | "1" } {
+  const failed = input.v2Failed + input.legacyFailed + input.stateWriteFailures;
+  const lines = [
+    `Warnungen: ${input.processedWarnings}`,
+    `Gemeinden: ${input.affectedMunicipalities}`,
+    `v2-Pushes: ${input.v2Sent} gesendet, ${input.v2Failed} Fehler`,
+    `Legacy-Pushes: ${input.legacySent} gesendet, ${input.legacyFailed} Fehler`,
+  ];
+  if (input.stateWriteFailures > 0) {
+    lines.push(`Redis-Schreibfehler: ${input.stateWriteFailures}`);
+  }
+  if (input.failedTargets.length > 0) {
+    lines.push("", "Fehler (Auszug):");
+    const shown = input.failedTargets.slice(0, PUSHOVER_MAX_FAILED_TARGETS_IN_MESSAGE);
+    lines.push(...shown.map((target) => `  ${target}`));
+    if (input.failedTargets.length > shown.length) {
+      lines.push(`  +${input.failedTargets.length - shown.length} mehr`);
     }
   }
-
-  if (input.skippedRateLimited > 0 || input.skippedQuietHours > 0) {
-    lines.push("");
-    lines.push(
-      `Skipped: ${input.skippedRateLimited} rate-limited, ${input.skippedQuietHours} quiet-hours`
-    );
+  if (input.deferredQuietHours > 0 || input.deferredRateLimited > 0) {
+    lines.push("", `Zurückgestellt: ${input.deferredQuietHours} Ruhezeit, ${input.deferredRateLimited} Update-Limit`);
   }
-
   lines.push(`Dauer: ${formatDuration(input.durationMs)}`);
 
   return {
-    title,
+    title: failed === 0 ? "HitzeV: Hitzewarnung versendet" : "HitzeV: Hitzewarnung mit Fehlern",
     message: lines.join("\n"),
-    priority: allOK ? "0" : "1",
+    priority: failed === 0 ? "0" : "1",
   };
 }
 
-export async function sendPushoverReport(input: PushoverReportInput): Promise<void> {
-  let status: PushoverReportStatus;
-  try {
-    status = await getPushoverReportStatus();
-  } catch (error) {
-    console.warn(`[${input.requestId}] pushover_status_error`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return;
-  }
-
-  if (!status.enabled) {
-    console.log(`[${input.requestId}] pushover_report_skipped`, {
-      configured: status.configured,
-      storedEnabled: status.storedEnabled,
-      defaultEnabled: status.defaultEnabled,
-    });
-    return;
-  }
-
-  const config = getPushoverConfig();
+async function postToPushover(
+  requestId: string,
+  content: { title: string; message: string; priority: "0" | "1" }
+): Promise<void> {
+  const config = pushoverConfig();
   if (!config) {
     return;
   }
 
-  const { title, message, priority } = buildPushoverMessage(input);
+  let status: PushoverReportStatus;
+  try {
+    status = await getPushoverReportStatus();
+  } catch (error) {
+    // Redis may be the reason we report; fall back to the env default.
+    console.warn(`[${requestId}] pushover_status_error`, { error: errorMessage(error) });
+    status = {
+      configured: true,
+      enabled: defaultReportsEnabled(),
+      defaultEnabled: defaultReportsEnabled(),
+      storedEnabled: null,
+      persistence: "memory",
+    };
+  }
+  if (!status.enabled) {
+    return;
+  }
 
   const params = new URLSearchParams({
     token: config.appToken,
     user: config.userKey,
-    title,
-    message,
-    priority,
+    title: content.title,
+    message: content.message,
+    priority: content.priority,
   });
   if (config.device) {
     params.set("device", config.device);
@@ -237,7 +187,6 @@ export async function sendPushoverReport(input: PushoverReportInput): Promise<vo
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), PUSHOVER_TIMEOUT_MS);
-
   try {
     const response = await fetch(PUSHOVER_API_URL, {
       method: "POST",
@@ -245,19 +194,48 @@ export async function sendPushoverReport(input: PushoverReportInput): Promise<vo
       body: params,
       signal: controller.signal,
     });
-
     if (!response.ok) {
-      const text = await response.text();
-      console.warn(`[${input.requestId}] pushover_send_failed`, {
-        status: response.status,
-        body: text.slice(0, 200),
-      });
+      console.warn(`[${requestId}] pushover_send_failed`, { status: response.status });
     }
-  } catch (error) {
-    console.warn(`[${input.requestId}] pushover_send_error`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
   } finally {
     clearTimeout(timeout);
   }
 }
+
+export async function sendPushoverRunReport(report: PushoverRunReport): Promise<void> {
+  try {
+    await postToPushover(report.requestId, buildRunMessage(report));
+  } catch (error) {
+    console.warn(`[${report.requestId}] pushover_send_error`, { error: errorMessage(error) });
+  }
+}
+
+/** At most one report per error code per hour (per process). */
+export function shouldSendFailureReport(errorCode: string, nowMs: number): boolean {
+  const last = lastFailureReportAt.get(errorCode);
+  if (last !== undefined && nowMs - last < FAILURE_REPORT_INTERVAL_MS) {
+    return false;
+  }
+  lastFailureReportAt.set(errorCode, nowMs);
+  return true;
+}
+
+export async function sendPushoverFailureReport(report: PushoverFailureReport): Promise<void> {
+  try {
+    if (!isPushoverConfigured() || !shouldSendFailureReport(report.errorCode, Date.now())) {
+      return;
+    }
+    await postToPushover(report.requestId, {
+      title: `HitzeV: Cron-Fehler ${report.errorCode}`,
+      message: `${report.message.slice(0, 500)}\n\nWeitere Fehler dieses Typs werden für 1 h nicht gemeldet.`,
+      priority: "1",
+    });
+  } catch (error) {
+    console.warn(`[${report.requestId}] pushover_failure_report_error`, { error: errorMessage(error) });
+  }
+}
+
+export const pushoverReporter: CronReporter = {
+  runReport: sendPushoverRunReport,
+  failureReport: sendPushoverFailureReport,
+};

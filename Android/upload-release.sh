@@ -1,10 +1,13 @@
 #!/bin/bash
-# Build the release bundle and upload to the configured Google Play track.
-set -e
+# Test, lint, build the release bundle and upload it to the configured Google Play track.
+set -euo pipefail
 cd "$(dirname "$0")"
 
+echo "-> Running unit tests and lint..."
+./gradlew :app:testDebugUnitTest :app:testReleaseUnitTest :app:lintRelease
+
 echo "-> Building and uploading release bundle..."
-./gradlew publishReleaseBundle
+./gradlew :app:publishReleaseBundle
 
 echo ""
 echo "Done."

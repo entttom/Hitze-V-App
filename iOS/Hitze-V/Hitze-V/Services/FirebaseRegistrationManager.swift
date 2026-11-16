@@ -1,177 +1,143 @@
-import Foundation
-import UIKit
-import UserNotifications
 import FirebaseCore
 import FirebaseMessaging
+import Foundation
+import os
+import UIKit
 
 @MainActor
 final class FirebaseRegistrationManager {
     static let shared = FirebaseRegistrationManager()
-    private let apnsWaitTimeoutNanoseconds: UInt64 = 12_000_000_000
-    private let tokenWaitTimeoutNanoseconds: UInt64 = 12_000_000_000
-    private let tokenRetryDelayNanoseconds: UInt64 = 300_000_000
-    private var didReceiveAPNsToken = false
-    private var apnsRegistrationFailureMessage: String?
+
+    /// True while the app is only the host of the unit tests; Firebase stays unconfigured then so
+    /// tests never talk to the real Firebase project.
+    nonisolated static let isRunningUnitTests: Bool = {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestBundlePath"] != nil
+            || environment["XCTestSessionIdentifier"] != nil
+    }()
+
+    private let apnsWaitTimeout: Duration = .seconds(5)
+    private var apnsRegistrationFailed = false
+    private var apnsWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
     private init() {}
 
-    func registerForPushNotificationsIfNeeded() async throws {
-        ensureFirebaseConfigured()
+    var isConfigured: Bool {
+        FirebaseApp.app() != nil
+    }
 
-        let center = UNUserNotificationCenter.current()
-        let settings = await center.notificationSettings()
+    func configureIfNeeded() {
+        guard !Self.isRunningUnitTests, FirebaseApp.app() == nil else { return }
+        FirebaseApp.configure()
+    }
 
-        switch settings.authorizationStatus {
-        case .notDetermined:
-            let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
-            guard granted else {
-                throw FirebaseRegistrationError.permissionDenied
-            }
-        case .denied:
-            throw FirebaseRegistrationError.permissionDenied
-        case .authorized, .provisional, .ephemeral:
-            break
-        @unknown default:
-            throw FirebaseRegistrationError.permissionDenied
-        }
-
-        if Messaging.messaging().apnsToken != nil {
-            didReceiveAPNsToken = true
-            apnsRegistrationFailureMessage = nil
-        } else {
-            didReceiveAPNsToken = false
-            apnsRegistrationFailureMessage = nil
-        }
-
+    /// Doesn't prompt; an APNs token is issued regardless of notification permission, and FCM
+    /// topic (un)subscription only needs that token.
+    func registerForRemoteNotifications() {
+        guard !Self.isRunningUnitTests else { return }
         UIApplication.shared.registerForRemoteNotifications()
-        try await waitForAPNsToken()
-        try await waitForFCMToken()
     }
 
     func notifyAPNsRegistrationSucceeded() {
-        didReceiveAPNsToken = true
-        apnsRegistrationFailureMessage = nil
+        apnsRegistrationFailed = false
+        resumeAPNsWaiters()
     }
 
     func notifyAPNsRegistrationFailed(_ error: any Error) {
-        apnsRegistrationFailureMessage = error.localizedDescription
+        apnsRegistrationFailed = true
+        pushLogger.error("APNs registration failed: \(error.localizedDescription, privacy: .public)")
+        resumeAPNsWaiters()
     }
 
-    func deregisterFromFirebase() async throws {
-        print("Starting Firebase deregistration...")
-        UIApplication.shared.unregisterForRemoteNotifications()
+    /// The current FCM token. Waits at most a few seconds for the APNs token on a cold start;
+    /// if it arrives later, the token-refresh callback triggers another sync.
+    func currentFCMToken() async throws -> String {
+        guard isConfigured else { throw FirebaseRegistrationError.notConfigured }
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            Messaging.messaging().deleteToken { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    print("Firebase Messaging token deleted successfully.")
-                    continuation.resume(returning: ())
-                }
-            }
-        }
-    }
-
-    private func ensureFirebaseConfigured() {
-        if FirebaseApp.app() == nil {
-            FirebaseApp.configure()
-        }
-    }
-
-    private func waitForAPNsToken() async throws {
-        let startTime = DispatchTime.now().uptimeNanoseconds
-
-        while DispatchTime.now().uptimeNanoseconds - startTime < apnsWaitTimeoutNanoseconds {
-            if let apnsRegistrationFailureMessage {
-                throw FirebaseRegistrationError.apnsRegistrationFailed(message: apnsRegistrationFailureMessage)
-            }
-
-            if didReceiveAPNsToken || Messaging.messaging().apnsToken != nil {
-                print("APNs token available.")
-                return
-            }
-
-            try await Task.sleep(nanoseconds: tokenRetryDelayNanoseconds)
+        if let token = Messaging.messaging().fcmToken, !token.isEmpty {
+            return token
         }
 
-        throw FirebaseRegistrationError.apnsTokenTimeout
-    }
-
-    private func waitForFCMToken() async throws {
-        let startTime = DispatchTime.now().uptimeNanoseconds
-
-        while DispatchTime.now().uptimeNanoseconds - startTime < tokenWaitTimeoutNanoseconds {
-            if let existingToken = Messaging.messaging().fcmToken,
-               !existingToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                print("FCM token available.")
-                return
-            }
-
-            do {
-                let token = try await fetchFCMToken()
-                if !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    print("FCM token fetched successfully.")
-                    return
-                }
-            } catch {
-                if !isMissingAPNsTokenError(error) {
-                    throw FirebaseRegistrationError.tokenFetchFailed(message: error.localizedDescription)
-                }
-            }
-
-            try await Task.sleep(nanoseconds: tokenRetryDelayNanoseconds)
+        if Messaging.messaging().apnsToken == nil, !apnsRegistrationFailed {
+            await waitForAPNsToken()
+        }
+        guard Messaging.messaging().apnsToken != nil else {
+            throw FirebaseRegistrationError.apnsTokenUnavailable
         }
 
-        throw FirebaseRegistrationError.tokenTimeout
+        let token = try await Messaging.messaging().token()
+        guard !token.isEmpty else { throw FirebaseRegistrationError.tokenMissing }
+        return token
     }
 
-    private func fetchFCMToken() async throws -> String {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, any Error>) in
-            Messaging.messaging().token { token, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
+    func deleteFCMToken() async throws {
+        guard isConfigured else { throw FirebaseRegistrationError.notConfigured }
+        try await Messaging.messaging().deleteToken()
+    }
 
-                guard let token else {
-                    continuation.resume(throwing: FirebaseRegistrationError.tokenMissing)
-                    return
-                }
+    private func waitForAPNsToken() async {
+        let id = UUID()
+        let timeout = Task { [apnsWaitTimeout] in
+            try? await Task.sleep(for: apnsWaitTimeout)
+            self.resumeAPNsWaiter(id)
+        }
+        await withCheckedContinuation { continuation in
+            apnsWaiters[id] = continuation
+        }
+        timeout.cancel()
+    }
 
-                continuation.resume(returning: token)
-            }
+    private func resumeAPNsWaiter(_ id: UUID) {
+        apnsWaiters.removeValue(forKey: id)?.resume()
+    }
+
+    private func resumeAPNsWaiters() {
+        let waiters = apnsWaiters
+        apnsWaiters.removeAll()
+        for continuation in waiters.values {
+            continuation.resume()
         }
     }
+}
 
-    private func isMissingAPNsTokenError(_ error: any Error) -> Bool {
-        let nsError = error as NSError
-        return nsError.domain == "com.google.fcm" && nsError.code == 505
+final class FirebaseTopicClient: PushTopicClient {
+    func currentToken() async throws -> String {
+        try await FirebaseRegistrationManager.shared.currentFCMToken()
+    }
+
+    func subscribe(toTopic topic: String) async throws {
+        guard FirebaseRegistrationManager.shared.isConfigured else {
+            throw FirebaseRegistrationError.notConfigured
+        }
+        try await Messaging.messaging().subscribe(toTopic: topic)
+    }
+
+    func unsubscribe(fromTopic topic: String) async throws {
+        guard FirebaseRegistrationManager.shared.isConfigured else {
+            throw FirebaseRegistrationError.notConfigured
+        }
+        try await Messaging.messaging().unsubscribe(fromTopic: topic)
+    }
+
+    func deleteToken() async throws {
+        try await FirebaseRegistrationManager.shared.deleteFCMToken()
     }
 }
 
 enum FirebaseRegistrationError: LocalizedError {
-    case permissionDenied
-    case apnsTokenTimeout
-    case apnsRegistrationFailed(message: String)
+    case notConfigured
+    case apnsTokenUnavailable
     case tokenMissing
-    case tokenTimeout
-    case tokenFetchFailed(message: String)
 
     var errorDescription: String? {
         switch self {
-        case .permissionDenied:
-            return "Push-Berechtigung wurde nicht erteilt."
-        case .apnsTokenTimeout:
-            return "APNs Token konnte nicht rechtzeitig ermittelt werden."
-        case .apnsRegistrationFailed(let message):
-            return "APNs Registrierung fehlgeschlagen: \(message)"
+        case .notConfigured:
+            return "Firebase ist nicht konfiguriert."
+        case .apnsTokenUnavailable:
+            return "APNs-Token ist noch nicht verfügbar."
         case .tokenMissing:
-            return "FCM Token wurde nicht geliefert."
-        case .tokenTimeout:
-            return "FCM Token konnte nicht rechtzeitig ermittelt werden."
-        case .tokenFetchFailed(let message):
-            return "FCM Token konnte nicht abgerufen werden: \(message)"
+            return "FCM-Token wurde nicht geliefert."
         }
     }
 }

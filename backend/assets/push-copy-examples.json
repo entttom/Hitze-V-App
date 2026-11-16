@@ -1,0 +1,74 @@
+{
+  "description": "Golden vectors for the push renderer (docs/push-contract-v2.md). Backend, iOS and Android unit tests must reproduce title and body exactly.",
+  "cases": [
+    {
+      "id": "single-today-new",
+      "now": "2026-07-07T06:30:00Z",
+      "event": "new",
+      "name": "Graz",
+      "days": [{ "date": "2026-07-07", "level": 3, "start": "2026-07-07T08:00:00Z", "end": "2026-07-07T16:00:00Z" }],
+      "expected": {
+        "de": { "title": "Hitzewarnung", "body": "Heute in Graz: Hitzewarnstufe 3 (orange), 10:00–18:00 Uhr. Schutzmaßnahmen nach Hitze-V umsetzen." },
+        "en": { "title": "Heat warning", "body": "Today in Graz: heat warning level 3 (orange), 10:00–18:00. Take protective measures as required by the Hitze-V." }
+      }
+    },
+    {
+      "id": "escalated-all-day",
+      "now": "2026-07-07T12:00:00Z",
+      "event": "escalated",
+      "name": "Wien 1., Innere Stadt",
+      "days": [{ "date": "2026-07-07", "level": 4, "start": "2026-07-06T22:00:00Z", "end": "2026-07-07T22:00:00Z" }],
+      "expected": {
+        "de": { "title": "Hitzewarnung verschärft", "body": "Heute in Wien 1., Innere Stadt: Hitzewarnstufe auf 4 (rot) erhöht, ganztägig. Schutzmaßnahmen nach Hitze-V umsetzen." },
+        "en": { "title": "Heat warning raised", "body": "Today in Wien 1., Innere Stadt: heat warning raised to level 4 (red), all day. Take protective measures as required by the Hitze-V." }
+      }
+    },
+    {
+      "id": "today-and-tomorrow",
+      "now": "2026-07-07T06:30:00Z",
+      "event": "new",
+      "name": "Schwechat",
+      "days": [
+        { "date": "2026-07-07", "level": 2, "start": "2026-07-07T08:00:00Z", "end": "2026-07-07T16:00:00Z" },
+        { "date": "2026-07-08", "level": 3, "start": "2026-07-08T09:00:00Z", "end": "2026-07-08T17:45:00Z" }
+      ],
+      "expected": {
+        "de": { "title": "Hitzewarnung", "body": "Schwechat: heute Hitzewarnstufe 2 (gelb), 10:00–18:00 Uhr; morgen Hitzewarnstufe 3 (orange), 11:00–19:45 Uhr. Schutzmaßnahmen nach Hitze-V umsetzen." },
+        "en": { "title": "Heat warning", "body": "Schwechat: today heat warning level 2 (yellow), 10:00–18:00; tomorrow heat warning level 3 (orange), 11:00–19:45. Take protective measures as required by the Hitze-V." }
+      }
+    },
+    {
+      "id": "tomorrow-updated",
+      "now": "2026-07-07T14:00:00Z",
+      "event": "updated",
+      "name": "Graz",
+      "days": [{ "date": "2026-07-08", "level": 3, "start": "2026-07-08T09:00:00Z", "end": "2026-07-08T17:00:00Z" }],
+      "expected": {
+        "de": { "title": "Hitzewarnung aktualisiert", "body": "Morgen in Graz: Zeitraum der Hitzewarnstufe 3 geändert, jetzt 11:00–19:00 Uhr." },
+        "en": { "title": "Heat warning updated", "body": "Tomorrow in Graz: time window for heat warning level 3 changed, now 11:00–19:00." }
+      }
+    },
+    {
+      "id": "weekday-label-open-start",
+      "now": "2026-07-07T06:30:00Z",
+      "event": "new",
+      "name": "Graz",
+      "days": [{ "date": "2026-07-09", "level": 2, "start": "", "end": "2026-07-09T16:00:00Z" }],
+      "expected": {
+        "de": { "title": "Hitzewarnung", "body": "Donnerstag in Graz: Hitzewarnstufe 2 (gelb), 00:00–18:00 Uhr. Schutzmaßnahmen nach Hitze-V umsetzen." },
+        "en": { "title": "Heat warning", "body": "Thursday in Graz: heat warning level 2 (yellow), 00:00–18:00. Take protective measures as required by the Hitze-V." }
+      }
+    },
+    {
+      "id": "test",
+      "now": "2026-07-07T06:30:00Z",
+      "event": "test",
+      "name": "Graz",
+      "days": [],
+      "expected": {
+        "de": { "title": "Testbenachrichtigung", "body": "Testbenachrichtigung für Graz. Wenn du das liest, kommen Hitzewarnungen auf diesem Gerät an." },
+        "en": { "title": "Test notification", "body": "Test notification for Graz. If you can read this, heat warnings reach this device." }
+      }
+    }
+  ]
+}

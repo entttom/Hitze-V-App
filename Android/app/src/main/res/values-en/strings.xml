@@ -1,5 +1,0 @@
-<resources>
-    <string name="app_name">HitzeV</string>
-    <string name="notification_channel_name">Heat warnings</string>
-    <string name="notification_channel_description">Notifications for heat warnings</string>
-</resources>

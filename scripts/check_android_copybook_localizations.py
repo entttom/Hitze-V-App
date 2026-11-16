@@ -9,6 +9,7 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 ANDROID_COPYBOOK = REPO_ROOT / "Android" / "app" / "src" / "main" / "java" / "org" / "entner" / "HitzeV" / "ui" / "copy" / "Copybook.kt"
+ANDROID_SUPPLEMENTAL = ANDROID_COPYBOOK.parent / "CopybookSupplementalTranslations.kt"
 IOS_CATALOG = REPO_ROOT / "iOS" / "Hitze-V" / "Hitze-V" / "CopybookTranslationCatalog.swift"
 
 LANGUAGE_CODES = [
@@ -37,12 +38,6 @@ LANGUAGE_CODES = [
     "tr",
 ]
 
-ANDROID_SUPPLEMENTAL_KEYS = {
-    "Adjust appearance, language, and legal details.",
-    "Language",
-    "Set a label and then search for an address in Austria.",
-    "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step.",
-}
 
 
 def decode_literal(literal: str) -> str:
@@ -229,10 +224,61 @@ def parse_dictionary_keys(source_text: str, dictionary_name: str) -> dict[str, s
     return result
 
 
+def parse_supplemental_keys(source_text: str) -> dict[str, set[str]]:
+    """Keys of `ResolvedLanguage.XX to mapOf("english" to "translated", ...)` blocks."""
+    result: dict[str, set[str]] = {code: set() for code in LANGUAGE_CODES}
+    marker = "ResolvedLanguage."
+    index = 0
+    while True:
+        index = source_text.find(marker, index)
+        if index == -1:
+            return result
+        cursor = index + len(marker)
+        end = cursor
+        while end < len(source_text) and (source_text[end].isalnum() or source_text[end] == "_"):
+            end += 1
+        code = source_text[cursor:end].lower()
+        block_start = source_text.find("mapOf(", end)
+        if code not in result or block_start == -1 or source_text[end:block_start].strip() != "to":
+            index = end
+            continue
+
+        i = block_start + len("mapOf(")
+        depth = 1
+        while i < len(source_text) and depth > 0:
+            char = source_text[i]
+            if char == '"':
+                literal, literal_end = read_string_literal(source_text, i)
+                k = literal_end
+                while k < len(source_text) and source_text[k].isspace():
+                    k += 1
+                if source_text.startswith("to ", k):
+                    result[code].add(decode_kotlin_literal(literal))
+                    k += 3
+                    while source_text[k].isspace():
+                        k += 1
+                    _, literal_end = read_string_literal(source_text, k)
+                i = literal_end
+                continue
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            i += 1
+        index = i
+
+
+def decode_kotlin_literal(literal: str) -> str:
+    if literal.startswith('"""'):
+        return decode_literal(literal)
+    return ast.literal_eval(literal.replace("\\$", "$"))
+
+
 def available_keys() -> dict[str, set[str]]:
     result = parse_dictionary_keys(IOS_CATALOG.read_text(), "translations")
+    supplemental = parse_supplemental_keys(ANDROID_SUPPLEMENTAL.read_text())
     for code in LANGUAGE_CODES:
-        result.setdefault(code, set()).update(ANDROID_SUPPLEMENTAL_KEYS)
+        result.setdefault(code, set()).update(supplemental.get(code, set()))
     return result
 
 

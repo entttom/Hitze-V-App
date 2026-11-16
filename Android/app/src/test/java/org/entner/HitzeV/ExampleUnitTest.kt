@@ -2,6 +2,7 @@ package org.entner.HitzeV
 
 import org.entner.HitzeV.data.DashboardDataService
 import org.entner.HitzeV.model.HazardSeverity
+import org.entner.HitzeV.model.normalizeMunicipalityId
 import org.entner.HitzeV.model.ResolvedLanguage
 import org.entner.HitzeV.ui.copy.Copybook
 import org.junit.Assert.assertEquals
@@ -103,49 +104,6 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun minimumApparentTemperatureForSeverity_usesHeatWarningThresholds() {
-        assertEquals(
-            30.0,
-            DashboardDataService.minimumApparentTemperatureForSeverity(29.0, HazardSeverity.HEAT_YELLOW) ?: -1.0,
-            0.0
-        )
-        assertEquals(
-            35.0,
-            DashboardDataService.minimumApparentTemperatureForSeverity(32.0, HazardSeverity.HEAT_ORANGE) ?: -1.0,
-            0.0
-        )
-        assertEquals(
-            40.0,
-            DashboardDataService.minimumApparentTemperatureForSeverity(38.0, HazardSeverity.HEAT_RED) ?: -1.0,
-            0.0
-        )
-        assertEquals(
-            31.0,
-            DashboardDataService.minimumApparentTemperatureForSeverity(31.0, HazardSeverity.HEAT_YELLOW) ?: -1.0,
-            0.0
-        )
-        assertEquals(
-            29.0,
-            DashboardDataService.minimumApparentTemperatureForSeverity(29.0, HazardSeverity.NONE) ?: -1.0,
-            0.0
-        )
-        assertEquals(
-            29.0,
-            DashboardDataService.minimumApparentTemperatureForSeverity(31.0, HazardSeverity.NONE) ?: -1.0,
-            0.0
-        )
-        assertEquals(
-            null,
-            DashboardDataService.minimumApparentTemperatureForSeverity(null, HazardSeverity.NONE)
-        )
-        assertEquals(
-            30.0,
-            DashboardDataService.minimumApparentTemperatureForSeverity(null, HazardSeverity.HEAT_YELLOW) ?: -1.0,
-            0.0
-        )
-    }
-
-    @Test
     fun copybook_switchesBetweenGermanAndEnglish() {
         val german = Copybook(ResolvedLanguage.DE)
         val english = Copybook(ResolvedLanguage.EN)
@@ -154,5 +112,10 @@ class ExampleUnitTest {
         assertEquals("Welcome to HitzeV", english.onboardingWelcomeTitle)
         assertEquals("Stabil", german.severityHeadline(HazardSeverity.NONE))
         assertEquals("Critical", english.severityHeadline(HazardSeverity.HEAT_RED))
+    }
+
+    @Test
+    fun normalizeMunicipalityId_stripsWhitespaceAndKeepsLeadingZeros() {
+        assertEquals("01234", normalizeMunicipalityId(" 01 234\n"))
     }
 }

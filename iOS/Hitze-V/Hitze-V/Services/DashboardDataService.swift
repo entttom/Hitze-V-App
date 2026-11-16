@@ -1,394 +1,268 @@
 import Foundation
 import CoreLocation
+import os
 
-final class DashboardDataService {
+nonisolated let dashboardLogger = Logger(subsystem: "org.entner.HitzeV", category: "Dashboard")
+
+/// GeoSphere (heat warnings) is required; Open-Meteo (UV, feels-like) is optional so that an
+/// Open-Meteo outage can never hide a heat warning.
+nonisolated final class DashboardDataService: Sendable {
+    static let forecastDayCount = 4
+
     private let urlSession: URLSession
-    private let defaultGeoSphereBaseURL = "https://warnungen.zamg.at/wsapp/api/getWarningsForCoords"
+    private let geoSphereBaseURL = "https://warnungen.zamg.at/wsapp/api/getWarningsForCoords"
     private let openMeteoBaseURL = "https://api.open-meteo.com/v1/forecast"
-    private let viennaTimeZone = TimeZone(identifier: "Europe/Vienna") ?? .current
 
     init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
     }
 
-    private var geoSphereBaseURL: String {
-        if AppFeatureFlags.enableCustomGeoSphereURLSetting {
-            let configuredURL = UserDefaults.standard.string(forKey: "network.customGeoSphereUrl")?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !configuredURL.isEmpty {
-                return configuredURL
-            }
-        }
-
-        return defaultGeoSphereBaseURL
+    func fetchSnapshot(for coordinate: CLLocationCoordinate2D, now: Date = Date()) async throws -> WorksiteSnapshot {
+        async let meteo: OpenMeteoForecastResponse? = fetchOpenMeteoIgnoringErrors(for: coordinate)
+        let geoSphereData = try await fetchGeoSphereData(for: coordinate)
+        let meteoResult = await meteo
+        return try Self.makeSnapshot(geoSphereData: geoSphereData, openMeteo: meteoResult, now: now)
     }
 
-    private var customGeoSphereURL: String? {
-        guard AppFeatureFlags.enableCustomGeoSphereURLSetting else {
-            return nil
-        }
+    // MARK: - Parsing (static so it can be unit-tested without network)
 
-        let configuredURL = UserDefaults.standard.string(forKey: "network.customGeoSphereUrl")?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return configuredURL.isEmpty ? nil : configuredURL
+    static func makeSnapshot(
+        geoSphereData: Data,
+        openMeteoData: Data?,
+        now: Date
+    ) throws -> WorksiteSnapshot {
+        let meteo = openMeteoData.flatMap { try? JSONDecoder().decode(OpenMeteoForecastResponse.self, from: $0) }
+        return try makeSnapshot(geoSphereData: geoSphereData, openMeteo: meteo, now: now)
     }
 
-    func fetchSnapshot(for coordinate: CLLocationCoordinate2D) async throws -> WorksiteSnapshot {
-        async let geoSphere = fetchGeoSphere(for: coordinate)
-        async let meteo = fetchOpenMeteo(for: coordinate)
+    private static func makeSnapshot(
+        geoSphereData: Data,
+        openMeteo: OpenMeteoForecastResponse?,
+        now: Date
+    ) throws -> WorksiteSnapshot {
+        let geo = try parseGeoSphere(geoSphereData)
+        let meteoByDay = openMeteo?.daily.valuesByDay() ?? [:]
+        let calendar = ViennaTime.calendar
+        let today = calendar.startOfDay(for: now)
 
-        let geoResult = try await geoSphere
-        let meteoResult = try await meteo
-
-        let now = Date()
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = viennaTimeZone
-        var forecasts: [DailyForecast] = []
-        
-        let targetDates = (0..<4).compactMap { calendar.date(byAdding: .day, value: $0, to: now) }
-        
-        for (i, targetDate) in targetDates.enumerated() {
-            var uvMax: Double?
-            var tempMax: Double?
-            
-            if i < meteoResult.daily.time.count {
-                uvMax = meteoResult.daily.uvIndexMax[i]
-                tempMax = meteoResult.daily.apparentTemperatureMax[i]
+        let forecasts: [DailyForecast] = (0..<forecastDayCount).compactMap { offset in
+            guard let day = calendar.date(byAdding: .day, value: offset, to: today) else {
+                return nil
             }
-            
-            let severity = highestHazardSeverity(for: targetDate, warnings: geoResult.warnings)
-            let warningTimeRanges = warningTimeRanges(for: targetDate, warnings: geoResult.warnings)
-            let adjustedTempMax = minimumApparentTemperature(tempMax, for: severity)
-            
-            forecasts.append(DailyForecast(
-                date: targetDate,
-                severity: severity,
-                apparentTemperatureMax: adjustedTempMax,
-                uvIndexMax: uvMax,
-                warningTimeRanges: warningTimeRanges
-            ))
+            let warnings = heatWarnings(on: day, in: geo.warnings)
+            let meteoValues = meteoByDay[ViennaTime.dayKey(for: day)]
+            return DailyForecast(
+                date: day,
+                severity: HazardSeverity.heat(from: warnings.map(\.level).max() ?? 0),
+                apparentTemperatureMax: meteoValues?.apparentTemperatureMax,
+                uvIndexMax: meteoValues?.uvIndexMax,
+                warningTimeRanges: mergedTimeRanges(for: day, warnings: warnings)
+            )
         }
 
         let todayForecast = forecasts.first
-
         return WorksiteSnapshot(
-            municipalityID: geoResult.municipalityID,
-            municipalityName: geoResult.municipalityName,
+            municipalityID: geo.municipalityID,
+            municipalityName: geo.municipalityName,
             severity: todayForecast?.severity ?? .none,
-            uvIndex: todayForecast?.uvIndexMax ?? nil,
-            apparentTemperature: todayForecast?.apparentTemperatureMax ?? nil,
+            uvIndex: todayForecast?.uvIndexMax,
+            apparentTemperature: todayForecast?.apparentTemperatureMax,
             forecasts: forecasts,
-            updatedAt: Date()
+            updatedAt: now
         )
     }
 
-    private func fetchGeoSphere(for coordinate: CLLocationCoordinate2D) async throws -> GeoSphereResolvedState {
-        let url: URL
-        if let customURL = customGeoSphereURL {
-            guard let parsedURL = URL(string: customURL) else {
-                throw DashboardDataError.invalidRequest
-            }
-            url = parsedURL
-        } else {
-            var components = URLComponents(string: geoSphereBaseURL)
-            components?.queryItems = [
-                URLQueryItem(name: "lat", value: String(format: "%.6f", coordinate.latitude)),
-                URLQueryItem(name: "lon", value: String(format: "%.6f", coordinate.longitude))
-            ]
-
-            guard let parsedURL = components?.url else {
-                throw DashboardDataError.invalidRequest
-            }
-            url = parsedURL
-        }
-
-        NSLog("GeoSphere request URL: %@", url.absoluteString)
-        let (data, response) = try await performGET(url)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            if let httpResponse = response as? HTTPURLResponse {
-                let bodyPreview = String(data: data.prefix(600), encoding: .utf8) ?? "<non-utf8 body>"
-                NSLog("GeoSphere HTTP failure: %ld for %@", httpResponse.statusCode, url.absoluteString)
-                NSLog("GeoSphere HTTP failure body preview: %@", bodyPreview)
-            }
-            if let municipalityNotFoundMessage = municipalityNotFoundMessage(from: data) {
-                throw DashboardDataError.municipalityNotFound(message: municipalityNotFoundMessage)
-            }
-            throw DashboardDataError.network(message: "GeoSphere HTTP Fehler")
-        }
-
+    private static func parseGeoSphere(_ data: Data) throws -> GeoSphereResolvedState {
         let decoded: GeoSphereLookupResponse
         do {
             decoded = try JSONDecoder().decode(GeoSphereLookupResponse.self, from: data)
         } catch {
-            debugGeoSphereDecodingFailure(error: error, data: data, url: url, response: httpResponse)
+            dashboardLogger.error("GeoSphere decode failed: \(String(describing: error), privacy: .public)")
             throw DashboardDataError.invalidGeoSphereResponse
         }
 
         if decoded.type.lowercased() == "error" {
-            throw DashboardDataError.municipalityNotFound(
-                message: decoded.msg ?? "Could not find municipal for coords."
-            )
+            throw DashboardDataError.municipalityNotFound(message: decoded.msg ?? "Could not find municipal for coords.")
         }
 
         guard let municipality = decoded.properties?.location?.properties,
-              let municipalityID = municipality.gemeindenr.value,
-              !municipalityID.isEmpty else {
+              let rawID = municipality.gemeindenr.value else {
+            throw DashboardDataError.invalidGeoSphereResponse
+        }
+        let municipalityID = Worksite.normalizedMunicipalityID(rawID)
+        guard !municipalityID.isEmpty else {
             throw DashboardDataError.invalidGeoSphereResponse
         }
 
-        let municipalityName = municipality.name ?? "Gemeinde \(municipalityID)"
-        let warnings = decoded.properties?.warnings ?? []
-
-        if warnings.isEmpty {
-            NSLog("GeoSphere response for municipality %@ contains 0 warnings", municipalityID)
-        } else {
-            NSLog("GeoSphere response for municipality %@ contains %ld warnings", municipalityID, warnings.count)
-        }
+        let name = municipality.name?
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
 
         return GeoSphereResolvedState(
             municipalityID: municipalityID,
-            municipalityName: municipalityName,
-            warnings: warnings
+            municipalityName: (name?.isEmpty == false) ? name : nil,
+            warnings: decoded.properties?.warnings ?? []
         )
     }
 
-    private func municipalityNotFoundMessage(from data: Data) -> String? {
-        guard let decoded = try? JSONDecoder().decode(GeoSphereLookupResponse.self, from: data) else {
-            return nil
-        }
-
-        guard decoded.type.lowercased() == "error" else {
-            return nil
-        }
-
-        let message = decoded.msg?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !message.isEmpty else {
-            return "Could not find municipal for coords."
-        }
-
-        let normalizedMessage = message.lowercased()
-        if normalizedMessage.contains("could not find municipal for coords") ||
-            normalizedMessage.contains("could not find municipality") ||
-            normalizedMessage.contains("municipal for coords") {
-            return message
-        }
-
-        return nil
-    }
-    
-    private func parseGeosphereTimestamp(_ value: String?) -> Date? {
-        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
-        
-        if let timeInterval = TimeInterval(value) {
-            // ZamG timestamps are often in milliseconds
-            if timeInterval > 100000000000 {
-                return Date(timeIntervalSince1970: timeInterval / 1000.0)
-            }
-            return Date(timeIntervalSince1970: timeInterval)
-        }
-        
-        let isoFormatter = ISO8601DateFormatter()
-        if let date = isoFormatter.date(from: value) {
-            return date
-        }
-
-        let localFormatter = DateFormatter()
-        localFormatter.locale = Locale(identifier: "de_AT_POSIX")
-        localFormatter.timeZone = viennaTimeZone
-        localFormatter.dateFormat = "dd.MM.yyyy HH:mm"
-        if let date = localFormatter.date(from: value) {
-            return date
-        }
-        
-        return nil
-    }
-
-    private func highestHazardSeverity(for targetDate: Date, warnings: [GeoSphereWarning]) -> HazardSeverity {
-        let highestHeat = heatWarnings(for: targetDate, warnings: warnings)
-            .map(\.level)
-            .max() ?? 0
-
-        if highestHeat > 0 {
-            return HazardSeverity.heat(from: highestHeat)
-        }
-        
-        return .none
-    }
-
-    private func warningTimeRanges(for targetDate: Date, warnings: [GeoSphereWarning]) -> [WarningTimeRange] {
-        let calendar = gregorianViennaCalendar()
-        let startOfDay = calendar.startOfDay(for: targetDate)
-        guard let endOfDay = calendar.date(byAdding: DateComponents(day: 1, second: -1), to: startOfDay) else {
-            return []
-        }
-
-        return heatWarnings(for: targetDate, warnings: warnings)
-            .map { warning in
-                WarningTimeRange(
-                    start: max(warning.start ?? startOfDay, startOfDay),
-                    end: min(warning.end ?? endOfDay, endOfDay)
-                )
-            }
-            .sorted { $0.start < $1.start }
-            .reduce(into: [WarningTimeRange]()) { merged, range in
-                guard let lastRange = merged.last else {
-                    merged.append(range)
-                    return
-                }
-
-                if range.start > lastRange.end {
-                    merged.append(range)
-                } else {
-                    merged[merged.count - 1] = WarningTimeRange(
-                        start: lastRange.start,
-                        end: max(lastRange.end, range.end)
-                    )
-                }
-            }
-    }
-
-    private func heatWarnings(for targetDate: Date, warnings: [GeoSphereWarning]) -> [DailyHeatWarning] {
-        let calendar = gregorianViennaCalendar()
-        let startOfTargetDay = calendar.startOfDay(for: targetDate)
-        guard let endOfTargetDay = calendar.date(byAdding: DateComponents(day: 1, second: -1), to: startOfTargetDay) else {
+    private static func heatWarnings(on day: Date, in warnings: [GeoSphereWarning]) -> [DailyHeatWarning] {
+        let calendar = ViennaTime.calendar
+        guard let nextDay = calendar.date(byAdding: .day, value: 1, to: day) else {
             return []
         }
 
         return warnings.compactMap { warning in
             let properties = warning.properties
-            let startDate = parseGeosphereTimestamp(resolvedWarningStart(properties))
-            let endDate = parseGeosphereTimestamp(resolvedWarningEnd(properties))
-
-            let isActiveOnTargetDate: Bool
-            switch (startDate, endDate) {
-            case let (startDate?, endDate?):
-                isActiveOnTargetDate = !(endDate < startOfTargetDay || startDate > endOfTargetDay)
-            case let (startDate?, nil):
-                isActiveOnTargetDate = startDate <= endOfTargetDay
-            case let (nil, endDate?):
-                isActiveOnTargetDate = endDate >= startOfTargetDay
-            case (nil, nil):
-                isActiveOnTargetDate = true
-            }
-
-            guard isActiveOnTargetDate, isHeatWarning(properties) else {
+            guard isHeatWarning(properties) else {
                 return nil
             }
+            let start = parseTimestamp(firstNonEmpty([properties.start, properties.begin, properties.rawinfo?.start, properties.rawfinfo?.start]))
+            let end = parseTimestamp(firstNonEmpty([properties.end, properties.rawinfo?.end, properties.rawfinfo?.end]))
 
-            let level = normalizedHeatWarningLevel(resolvedWarningLevel(properties))
-            return DailyHeatWarning(level: level, start: startDate, end: endDate)
+            if let start, start >= nextDay { return nil }
+            if let end, end <= day { return nil }
+
+            let level = normalizedHeatWarningLevel(warningLevel(properties))
+            guard level > 0 else { return nil }
+            return DailyHeatWarning(level: level, start: start, end: end)
         }
     }
 
-    private func resolvedWarningStart(_ properties: GeoSphereWarningProperties) -> String? {
-        let candidates = [
-            properties.start,
-            properties.begin,
-            properties.rawinfo?.start,
-            properties.rawfinfo?.start
-        ]
-
-        return candidates.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty }
-    }
-
-    private func resolvedWarningEnd(_ properties: GeoSphereWarningProperties) -> String? {
-        let candidates = [
-            properties.end,
-            properties.rawinfo?.end,
-            properties.rawfinfo?.end
-        ]
-
-        return candidates.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty }
-    }
-
-    private func resolvedWarningLevel(_ properties: GeoSphereWarningProperties) -> Int {
-        let candidates = [
-            properties.warnstufeid,
-            properties.wlevel,
-            properties.rawinfo?.wlevel,
-            properties.rawfinfo?.wlevel
-        ]
-        .compactMap { $0 }
-
-        return candidates.max() ?? 0
-    }
-
-    private func normalizedHeatWarningLevel(_ geoSphereLevel: Int) -> Int {
-        guard geoSphereLevel > 0 else {
-            return 0
+    private static func mergedTimeRanges(for day: Date, warnings: [DailyHeatWarning]) -> [WarningTimeRange] {
+        guard let nextDay = ViennaTime.calendar.date(byAdding: .day, value: 1, to: day) else {
+            return []
         }
 
-        return geoSphereLevel + 1
+        return warnings
+            .map { WarningTimeRange(start: max($0.start ?? day, day), end: min($0.end ?? nextDay, nextDay)) }
+            .sorted { $0.start < $1.start }
+            .reduce(into: [WarningTimeRange]()) { merged, range in
+                if let last = merged.last, range.start <= last.end {
+                    merged[merged.count - 1] = WarningTimeRange(start: last.start, end: max(last.end, range.end))
+                } else {
+                    merged.append(range)
+                }
+            }
     }
 
-    private func isHeatWarning(_ properties: GeoSphereWarningProperties) -> Bool {
-        let typeCandidates = [
-            properties.wtype,
-            properties.warntypid,
-            properties.rawinfo?.wtype,
-            properties.rawfinfo?.wtype
-        ]
-        .compactMap { $0 }
+    private static func firstNonEmpty(_ candidates: [String?]) -> String? {
+        candidates
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
 
+    private static func warningLevel(_ properties: GeoSphereWarningProperties) -> Int {
+        [properties.warnstufeid, properties.wlevel, properties.rawinfo?.wlevel, properties.rawfinfo?.wlevel]
+            .compactMap { $0 }
+            .max() ?? 0
+    }
+
+    private static func normalizedHeatWarningLevel(_ geoSphereLevel: Int) -> Int {
+        geoSphereLevel > 0 ? min(geoSphereLevel + 1, 4) : 0
+    }
+
+    private static func isHeatWarning(_ properties: GeoSphereWarningProperties) -> Bool {
+        let typeCandidates = [properties.wtype, properties.warntypid, properties.rawinfo?.wtype, properties.rawfinfo?.wtype]
+            .compactMap { $0 }
         if !typeCandidates.isEmpty {
             return typeCandidates.contains(6)
         }
-
         guard let textualType = properties.warningType?.lowercased() else {
             return false
         }
-
         return textualType.contains("hitze") || textualType.contains("heat")
     }
 
-    private func gregorianViennaCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = viennaTimeZone
-        return calendar
-    }
+    nonisolated(unsafe) private static let isoFormatter = ISO8601DateFormatter()
 
-    private func minimumApparentTemperature(_ value: Double?, for severity: HazardSeverity) -> Double? {
-        let minimumValue: Double
-        switch severity {
-        case .heatYellow:
-            minimumValue = 30.0
-        case .heatOrange:
-            minimumValue = 35.0
-        case .heatRed:
-            minimumValue = 40.0
-        case .none, .coldYellow, .coldOrange, .coldRed:
-            guard let value else {
-                return nil
-            }
-            return min(value, 29.0)
+    private static let localFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = ViennaTime.timeZone
+        formatter.dateFormat = "dd.MM.yyyy HH:mm"
+        return formatter
+    }()
+
+    static func parseTimestamp(_ value: String?) -> Date? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
         }
-
-        return max(value ?? minimumValue, minimumValue)
+        if let interval = TimeInterval(value) {
+            // GeoSphere sends epoch seconds or milliseconds depending on the field.
+            return Date(timeIntervalSince1970: interval > 100_000_000_000 ? interval / 1000 : interval)
+        }
+        return isoFormatter.date(from: value) ?? localFormatter.date(from: value)
     }
 
-    private func fetchOpenMeteo(for coordinate: CLLocationCoordinate2D) async throws -> OpenMeteoForecastResponse {
-        var components = URLComponents(string: openMeteoBaseURL)
-        components?.queryItems = [
-            URLQueryItem(name: "latitude", value: String(format: "%.6f", coordinate.latitude)),
-            URLQueryItem(name: "longitude", value: String(format: "%.6f", coordinate.longitude)),
-            URLQueryItem(name: "daily", value: "uv_index_max,apparent_temperature_max"),
-            URLQueryItem(name: "timezone", value: "Europe/Vienna"),
-            URLQueryItem(name: "forecast_days", value: "4")
-        ]
+    // MARK: - Network
 
+    private func fetchGeoSphereData(for coordinate: CLLocationCoordinate2D) async throws -> Data {
+        var components = URLComponents(string: geoSphereBaseURL)
+        components?.queryItems = [
+            URLQueryItem(name: "lat", value: Self.coordinateString(coordinate.latitude)),
+            URLQueryItem(name: "lon", value: Self.coordinateString(coordinate.longitude))
+        ]
         guard let url = components?.url else {
             throw DashboardDataError.invalidRequest
         }
 
         let (data, response) = try await performGET(url)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            throw DashboardDataError.network(message: "Open-Meteo HTTP Fehler")
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            dashboardLogger.error("GeoSphere HTTP status \(status, privacy: .public)")
+            if let message = Self.municipalityNotFoundMessage(from: data) {
+                throw DashboardDataError.municipalityNotFound(message: message)
+            }
+            throw DashboardDataError.network(message: "GeoSphere HTTP \(status)")
+        }
+        return data
+    }
+
+    private func fetchOpenMeteoIgnoringErrors(for coordinate: CLLocationCoordinate2D) async -> OpenMeteoForecastResponse? {
+        var components = URLComponents(string: openMeteoBaseURL)
+        components?.queryItems = [
+            URLQueryItem(name: "latitude", value: Self.coordinateString(coordinate.latitude)),
+            URLQueryItem(name: "longitude", value: Self.coordinateString(coordinate.longitude)),
+            URLQueryItem(name: "daily", value: "uv_index_max,apparent_temperature_max"),
+            URLQueryItem(name: "timezone", value: "Europe/Vienna"),
+            URLQueryItem(name: "forecast_days", value: String(Self.forecastDayCount))
+        ]
+        guard let url = components?.url else {
+            return nil
         }
 
-        let decoded = try JSONDecoder().decode(OpenMeteoForecastResponse.self, from: data)
-        return decoded
+        do {
+            let (data, response) = try await performGET(url)
+            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                dashboardLogger.notice("Open-Meteo unavailable; showing heat warnings without UV/feels-like")
+                return nil
+            }
+            return try JSONDecoder().decode(OpenMeteoForecastResponse.self, from: data)
+        } catch {
+            dashboardLogger.notice("Open-Meteo failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    private static func municipalityNotFoundMessage(from data: Data) -> String? {
+        guard let decoded = try? JSONDecoder().decode(GeoSphereLookupResponse.self, from: data),
+              decoded.type.lowercased() == "error" else {
+            return nil
+        }
+        let message = decoded.msg?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !message.isEmpty else {
+            return "Could not find municipal for coords."
+        }
+        let normalized = message.lowercased()
+        if normalized.contains("municipal for coords") || normalized.contains("could not find municipality") {
+            return message
+        }
+        return nil
+    }
+
+    private static func coordinateString(_ value: Double) -> String {
+        String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), value)
     }
 
     private func performGET(_ url: URL) async throws -> (Data, URLResponse) {
@@ -404,96 +278,64 @@ final class DashboardDataService {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            NSLog("Network transport error for %@: %@", url.absoluteString, error.localizedDescription)
+            dashboardLogger.error("Network transport error (\(url.host() ?? "-", privacy: .public)): \(error.localizedDescription, privacy: .public)")
             throw DashboardDataError.network(message: error.localizedDescription)
         }
     }
-
-    private func debugGeoSphereDecodingFailure(
-        error: Error,
-        data: Data,
-        url: URL,
-        response: HTTPURLResponse
-    ) {
-        NSLog("GeoSphere decode failed for URL: %@", url.absoluteString)
-        NSLog("GeoSphere HTTP status: %ld", response.statusCode)
-        NSLog("GeoSphere decoding error: %@", String(describing: error))
-
-        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            NSLog("GeoSphere top-level keys: %@", object.keys.sorted().joined(separator: ", "))
-
-            if let firstKey = object.keys.sorted().first,
-               let nestedObject = object[firstKey] as? [String: Any] {
-                NSLog(
-                    "GeoSphere nested keys for %@: %@",
-                    firstKey,
-                    nestedObject.keys.sorted().joined(separator: ", ")
-                )
-            }
-        }
-
-        let bodyPreview = String(data: data.prefix(1200), encoding: .utf8) ?? "<non-utf8 body>"
-        NSLog("GeoSphere body preview: %@", bodyPreview)
-    }
 }
 
-private struct DailyHeatWarning {
+private nonisolated struct DailyHeatWarning {
     let level: Int
     let start: Date?
     let end: Date?
 }
 
-private struct GeoSphereResolvedState {
+private nonisolated struct GeoSphereResolvedState {
     let municipalityID: String
-    let municipalityName: String
+    let municipalityName: String?
     let warnings: [GeoSphereWarning]
 }
 
-private struct GeoSphereLookupResponse: Decodable {
+private nonisolated struct GeoSphereLookupResponse: Decodable {
     let type: String
     let msg: String?
     let properties: GeoSphereLookupProperties?
 }
 
-private struct GeoSphereLookupProperties: Decodable {
+private nonisolated struct GeoSphereLookupProperties: Decodable {
     let location: GeoSphereLocation?
     let warnings: [GeoSphereWarning]?
 }
 
-private struct GeoSphereLocation: Decodable {
+private nonisolated struct GeoSphereLocation: Decodable {
     let properties: GeoSphereMunicipality?
 }
 
-private struct GeoSphereMunicipality: Decodable {
+private nonisolated struct GeoSphereMunicipality: Decodable {
     let gemeindenr: GeoSphereIDValue
     let name: String?
 }
 
-private struct GeoSphereIDValue: Decodable {
+private nonisolated struct GeoSphereIDValue: Decodable {
     let value: String?
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-
         if let intValue = try? container.decode(Int.self) {
             value = String(intValue)
-            return
-        }
-
-        if let stringValue = try? container.decode(String.self) {
+        } else if let stringValue = try? container.decode(String.self) {
             value = stringValue
-            return
+        } else {
+            value = nil
         }
-
-        value = nil
     }
 }
 
-private struct GeoSphereWarning: Decodable {
+private nonisolated struct GeoSphereWarning: Decodable {
     let properties: GeoSphereWarningProperties
 }
 
-private struct GeoSphereWarningProperties: Decodable {
+private nonisolated struct GeoSphereWarningProperties: Decodable {
     let warntypid: Int?
     let warnstufeid: Int?
     let wtype: Int?
@@ -506,38 +348,47 @@ private struct GeoSphereWarningProperties: Decodable {
     let end: String?
 
     enum CodingKeys: String, CodingKey {
-        case warntypid
-        case warnstufeid
-        case wtype
-        case wlevel
-        case rawinfo
-        case rawfinfo
+        case warntypid, warnstufeid, wtype, wlevel, rawinfo, rawfinfo, begin, start, end
         case warningType = "warning_type"
-        case begin
-        case start
-        case end
     }
 }
 
-private struct GeoSphereRawInfo: Decodable {
+private nonisolated struct GeoSphereRawInfo: Decodable {
     let wtype: Int?
     let wlevel: Int?
     let start: String?
     let end: String?
 }
 
-private struct OpenMeteoForecastResponse: Decodable {
+private nonisolated struct OpenMeteoForecastResponse: Decodable {
     let daily: OpenMeteoDaily
 }
 
-private struct OpenMeteoDaily: Decodable {
+private nonisolated struct OpenMeteoDaily: Decodable {
     let time: [String]
-    let uvIndexMax: [Double?]
-    let apparentTemperatureMax: [Double?]
+    let uvIndexMax: [Double?]?
+    let apparentTemperatureMax: [Double?]?
 
     enum CodingKeys: String, CodingKey {
         case time
         case uvIndexMax = "uv_index_max"
         case apparentTemperatureMax = "apparent_temperature_max"
+    }
+
+    struct DayValues {
+        let uvIndexMax: Double?
+        let apparentTemperatureMax: Double?
+    }
+
+    /// Keyed by the `time` entry (yyyy-MM-dd, Europe/Vienna); arrays of unequal length are
+    /// tolerated so a short `uv_index_max` never shifts values onto the wrong day.
+    func valuesByDay() -> [String: DayValues] {
+        var result: [String: DayValues] = [:]
+        for (index, day) in time.enumerated() {
+            let uv = uvIndexMax.flatMap { index < $0.count ? $0[index] : nil }
+            let apparent = apparentTemperatureMax.flatMap { index < $0.count ? $0[index] : nil }
+            result[day] = DayValues(uvIndexMax: uv, apparentTemperatureMax: apparent)
+        }
+        return result
     }
 }

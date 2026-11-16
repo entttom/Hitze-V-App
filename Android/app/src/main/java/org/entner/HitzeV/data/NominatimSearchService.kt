@@ -1,24 +1,34 @@
 package org.entner.HitzeV.data
 
-import android.content.Context
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.entner.HitzeV.BuildConfig
 import org.entner.HitzeV.model.AddressSearchResult
 import java.net.HttpURLConnection
-import java.net.URLEncoder
 import java.net.URL
+import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import kotlin.coroutines.cancellation.CancellationException
 
-class NominatimSearchService(private val context: Context) {
+class NominatimSearchService(
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val userAgent: String = DEFAULT_USER_AGENT
+) {
     private val json = Json { ignoreUnknownKeys = true }
-    private val searchCache = linkedMapOf<String, List<AddressSearchResult>>()
+    private val cacheLock = Any()
+    private val searchCache = object : LinkedHashMap<String, List<AddressSearchResult>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<AddressSearchResult>>?): Boolean =
+            size > MAX_CACHE_ENTRIES
+    }
 
-    suspend fun search(query: String): NominatimSearchResult = withContext(Dispatchers.IO) {
-        searchCache[query.lowercase(Locale.ROOT)]?.let { cached ->
+    suspend fun search(query: String, languageTag: String): NominatimSearchResult = withContext(ioDispatcher) {
+        val cacheKey = "${languageTag.lowercase(Locale.ROOT)}|${query.lowercase(Locale.ROOT)}"
+        synchronized(cacheLock) { searchCache[cacheKey] }?.let { cached ->
             return@withContext NominatimSearchResult.Success(cached)
         }
 
@@ -37,8 +47,8 @@ class NominatimSearchService(private val context: Context) {
             connectTimeout = 10_000
             readTimeout = 10_000
             setRequestProperty("Accept", "application/json")
-            setRequestProperty("Accept-Language", Locale.getDefault().toLanguageTag())
-            setRequestProperty("User-Agent", "Hitze-V Android (${context.packageName})")
+            setRequestProperty("Accept-Language", languageTag)
+            setRequestProperty("User-Agent", userAgent)
         }
 
         try {
@@ -53,12 +63,12 @@ class NominatimSearchService(private val context: Context) {
                 .distinctBy { it.id }
                 .take(6)
 
-            searchCache[query.lowercase(Locale.ROOT)] = results
-            trimCache()
-
+            synchronized(cacheLock) { searchCache[cacheKey] = results }
             NominatimSearchResult.Success(results)
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Exception) {
-            NominatimSearchResult.Failure(error.localizedMessage ?: "Adresssuche fehlgeschlagen.")
+            NominatimSearchResult.Failure(error.localizedMessage ?: "Address search failed.")
         } finally {
             connection.disconnect()
         }
@@ -84,13 +94,6 @@ class NominatimSearchService(private val context: Context) {
         )
     }
 
-    private fun trimCache() {
-        while (searchCache.size > 16) {
-            val firstKey = searchCache.entries.firstOrNull()?.key ?: return
-            searchCache.remove(firstKey)
-        }
-    }
-
     @Serializable
     private data class NominatimItem(
         @SerialName("lat")
@@ -107,12 +110,14 @@ class NominatimSearchService(private val context: Context) {
     @Serializable
     private data class NominatimAddress(
         val road: String? = null,
-        @SerialName("house_number")
-        val houseNumber: String? = null,
-        val city: String? = null,
-        val town: String? = null,
-        val village: String? = null
+        val city: String? = null
     )
+
+    private companion object {
+        const val MAX_CACHE_ENTRIES = 16
+        // Nominatim usage policy requires an identifying User-Agent with a contact URL.
+        val DEFAULT_USER_AGENT = "HitzeV Android/${BuildConfig.VERSION_NAME} (+https://github.com/entttom/Hitze-V-App)"
+    }
 }
 
 sealed interface NominatimSearchResult {

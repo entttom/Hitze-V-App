@@ -9,16 +9,90 @@
 /* Begin PBXBuildFile section */
 		AA16C7FD2F5846B600EC7315 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = AA16C7FC2F5846B600EC7315 /* FirebaseMessaging */; };
 		AA16C7FE2F584A0000EC7315 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = AA16C7FF2F584A0000EC7315 /* FirebaseCore */; };
+		B1A0C0DE0000000000000019 /* HitzeVNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B1A0C0DE0000000000000001 /* HitzeVNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B1A0C0DE000000000000001A /* push-copy.json in Resources */ = {isa = PBXBuildFile; fileRef = B1A0C0DE0000000000000003 /* push-copy.json */; };
+		B1A0C0DE000000000000001B /* push-copy.json in Resources */ = {isa = PBXBuildFile; fileRef = B1A0C0DE0000000000000003 /* push-copy.json */; };
+		B1A0C0DE000000000000001C /* push-copy-examples.json in Resources */ = {isa = PBXBuildFile; fileRef = B1A0C0DE0000000000000004 /* push-copy-examples.json */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B1A0C0DE000000000000001D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA16C7E22F583FE300EC7315 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B1A0C0DE0000000000000010;
+			remoteInfo = HitzeVNotificationService;
+		};
+		B1A0C0DE000000000000001F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA16C7E22F583FE300EC7315 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA16C7E92F583FE300EC7315;
+			remoteInfo = "Hitze-V";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B1A0C0DE0000000000000018 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B1A0C0DE0000000000000019 /* HitzeVNotificationService.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		AA16C7EA2F583FE300EC7315 /* Hitze-V.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Hitze-V.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1A0C0DE0000000000000001 /* HitzeVNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HitzeVNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1A0C0DE0000000000000002 /* HitzeVTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HitzeVTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1A0C0DE0000000000000003 /* push-copy.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "push-copy.json"; path = "../../backend/assets/push-copy.json"; sourceTree = SOURCE_ROOT; };
+		B1A0C0DE0000000000000004 /* push-copy-examples.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "push-copy-examples.json"; path = "../../backend/assets/push-copy-examples.json"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B1A0C0DE0000000000000027 /* Exceptions for "Hitze-V" folder in "HitzeVNotificationService" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Push/PushCopyRenderer.swift,
+				Push/PushNotificationContent.swift,
+				Push/PushSharedSettings.swift,
+			);
+			target = B1A0C0DE0000000000000010 /* HitzeVNotificationService */;
+		};
+		B1A0C0DE0000000000000028 /* Exceptions for "HitzeVNotificationService" folder in "HitzeVNotificationService" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B1A0C0DE0000000000000010 /* HitzeVNotificationService */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AA16C7EC2F583FE300EC7315 /* Hitze-V */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B1A0C0DE0000000000000027 /* Exceptions for "Hitze-V" folder in "HitzeVNotificationService" target */,
+			);
 			path = "Hitze-V";
+			sourceTree = "<group>";
+		};
+		B1A0C0DE0000000000000005 /* HitzeVNotificationService */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B1A0C0DE0000000000000028 /* Exceptions for "HitzeVNotificationService" folder in "HitzeVNotificationService" target */,
+			);
+			path = HitzeVNotificationService;
+			sourceTree = "<group>";
+		};
+		B1A0C0DE0000000000000006 /* HitzeVTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HitzeVTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -33,6 +107,20 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B1A0C0DE0000000000000013 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B1A0C0DE0000000000000016 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -40,14 +128,28 @@
 			isa = PBXGroup;
 			children = (
 				AA16C7EC2F583FE300EC7315 /* Hitze-V */,
+				B1A0C0DE0000000000000005 /* HitzeVNotificationService */,
+				B1A0C0DE0000000000000006 /* HitzeVTests */,
+				B1A0C0DE0000000000000029 /* Shared Push Assets */,
 				AA16C7EB2F583FE300EC7315 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		B1A0C0DE0000000000000029 /* Shared Push Assets */ = {
+			isa = PBXGroup;
+			children = (
+				B1A0C0DE0000000000000003 /* push-copy.json */,
+				B1A0C0DE0000000000000004 /* push-copy-examples.json */,
+			);
+			name = "Shared Push Assets";
 			sourceTree = "<group>";
 		};
 		AA16C7EB2F583FE300EC7315 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				AA16C7EA2F583FE300EC7315 /* Hitze-V.app */,
+				B1A0C0DE0000000000000001 /* HitzeVNotificationService.appex */,
+				B1A0C0DE0000000000000002 /* HitzeVTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -62,10 +164,12 @@
 				AA16C7E62F583FE300EC7315 /* Sources */,
 				AA16C7E72F583FE300EC7315 /* Frameworks */,
 				AA16C7E82F583FE300EC7315 /* Resources */,
+				B1A0C0DE0000000000000018 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B1A0C0DE000000000000001E /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				AA16C7EC2F583FE300EC7315 /* Hitze-V */,
@@ -79,6 +183,51 @@
 			productReference = AA16C7EA2F583FE300EC7315 /* Hitze-V.app */;
 			productType = "com.apple.product-type.application";
 		};
+		B1A0C0DE0000000000000010 /* HitzeVNotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B1A0C0DE0000000000000021 /* Build configuration list for PBXNativeTarget "HitzeVNotificationService" */;
+			buildPhases = (
+				B1A0C0DE0000000000000012 /* Sources */,
+				B1A0C0DE0000000000000013 /* Frameworks */,
+				B1A0C0DE0000000000000014 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B1A0C0DE0000000000000005 /* HitzeVNotificationService */,
+			);
+			name = HitzeVNotificationService;
+			packageProductDependencies = (
+			);
+			productName = HitzeVNotificationService;
+			productReference = B1A0C0DE0000000000000001 /* HitzeVNotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		B1A0C0DE0000000000000011 /* HitzeVTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B1A0C0DE0000000000000024 /* Build configuration list for PBXNativeTarget "HitzeVTests" */;
+			buildPhases = (
+				B1A0C0DE0000000000000015 /* Sources */,
+				B1A0C0DE0000000000000016 /* Frameworks */,
+				B1A0C0DE0000000000000017 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B1A0C0DE0000000000000020 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				B1A0C0DE0000000000000006 /* HitzeVTests */,
+			);
+			name = HitzeVTests;
+			packageProductDependencies = (
+			);
+			productName = HitzeVTests;
+			productReference = B1A0C0DE0000000000000002 /* HitzeVTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -91,6 +240,13 @@
 				TargetAttributes = {
 					AA16C7E92F583FE300EC7315 = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					B1A0C0DE0000000000000010 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					B1A0C0DE0000000000000011 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = AA16C7E92F583FE300EC7315;
 					};
 				};
 			};
@@ -136,6 +292,8 @@
 			projectRoot = "";
 			targets = (
 				AA16C7E92F583FE300EC7315 /* Hitze-V */,
+				B1A0C0DE0000000000000010 /* HitzeVNotificationService */,
+				B1A0C0DE0000000000000011 /* HitzeVTests */,
 			);
 		};
 /* End PBXProject section */
@@ -145,6 +303,23 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B1A0C0DE000000000000001A /* push-copy.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B1A0C0DE0000000000000014 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B1A0C0DE000000000000001B /* push-copy.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B1A0C0DE0000000000000017 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B1A0C0DE000000000000001C /* push-copy-examples.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -158,7 +333,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B1A0C0DE0000000000000012 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B1A0C0DE0000000000000015 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B1A0C0DE000000000000001E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B1A0C0DE0000000000000010 /* HitzeVNotificationService */;
+			targetProxy = B1A0C0DE000000000000001D /* PBXContainerItemProxy */;
+		};
+		B1A0C0DE0000000000000020 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA16C7E92F583FE300EC7315 /* Hitze-V */;
+			targetProxy = B1A0C0DE000000000000001F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		AA16C7F32F583FE400EC7315 /* Debug */ = {
@@ -216,10 +418,12 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				INFOPLIST_KEY_UILaunchScreen_UIColorName = LaunchBackground;
 				INFOPLIST_KEY_UILaunchScreen_UIImageName = LaunchLogo;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -274,10 +478,13 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				INFOPLIST_KEY_UILaunchScreen_UIColorName = LaunchBackground;
 				INFOPLIST_KEY_UILaunchScreen_UIImageName = LaunchLogo;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
 		};
@@ -291,10 +498,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = RG7FE682S2;
-				ENABLE_APP_SANDBOX = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = HitzeV;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -308,25 +512,27 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
-				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
-				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.2.4;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "org.entner.HitzeV.Hitze-V";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
-				SDKROOT = auto;
+				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
-				XROS_DEPLOYMENT_TARGET = 26.2;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -340,10 +546,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = RG7FE682S2;
-				ENABLE_APP_SANDBOX = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = HitzeV;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -357,25 +560,147 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
-				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
-				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.2.4;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "org.entner.HitzeV.Hitze-V";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
-				SDKROOT = auto;
+				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
-				XROS_DEPLOYMENT_TARGET = 26.2;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B1A0C0DE0000000000000022 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = HitzeVNotificationService/HitzeVNotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RG7FE682S2;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HitzeVNotificationService/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = HitzeV;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.3.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "org.entner.HitzeV.Hitze-V.NotificationService";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B1A0C0DE0000000000000023 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = HitzeVNotificationService/HitzeVNotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RG7FE682S2;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HitzeVNotificationService/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = HitzeV;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.3.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "org.entner.HitzeV.Hitze-V.NotificationService";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B1A0C0DE0000000000000025 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RG7FE682S2;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.3.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "org.entner.HitzeV.Hitze-V.Tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hitze-V.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Hitze-V";
+			};
+			name = Debug;
+		};
+		B1A0C0DE0000000000000026 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RG7FE682S2;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.3.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "org.entner.HitzeV.Hitze-V.Tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hitze-V.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Hitze-V";
 			};
 			name = Release;
 		};
@@ -396,6 +721,24 @@
 			buildConfigurations = (
 				AA16C7F62F583FE400EC7315 /* Debug */,
 				AA16C7F72F583FE400EC7315 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B1A0C0DE0000000000000021 /* Build configuration list for PBXNativeTarget "HitzeVNotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B1A0C0DE0000000000000022 /* Debug */,
+				B1A0C0DE0000000000000023 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B1A0C0DE0000000000000024 /* Build configuration list for PBXNativeTarget "HitzeVTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B1A0C0DE0000000000000025 /* Debug */,
+				B1A0C0DE0000000000000026 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

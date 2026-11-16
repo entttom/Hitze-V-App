@@ -14,10 +14,11 @@ struct InfoView: View {
                     InfoScaleCard(
                         title: copy.infoScreenHeatScaleTitle,
                         entries: [
-                            ("2", copy.infoScreenLevel2Title, Color(red: 0.89, green: 0.72, blue: 0.11)),
-                            ("3", copy.infoScreenLevel3Title, Color(red: 0.95, green: 0.52, blue: 0.18)),
-                            ("4", copy.infoScreenLevel4Title, Color(red: 0.85, green: 0.24, blue: 0.20))
-                        ]
+                            (.heatYellow, copy.infoScreenLevel2Title),
+                            (.heatOrange, copy.infoScreenLevel3Title),
+                            (.heatRed, copy.infoScreenLevel4Title)
+                        ],
+                        copy: copy
                     )
 
                     InfoIntroCard(text: copy.infoIntro)
@@ -25,13 +26,13 @@ struct InfoView: View {
                     InfoSectionCard(
                         section: copy.heatProgramSection,
                         icon: "thermometer.sun.fill",
-                        tint: Color(red: 0.95, green: 0.52, blue: 0.18)
+                        tint: HazardSeverity.heatOrange.iconTint
                     )
 
                     InfoSectionCard(
                         section: copy.heatEmergencySection,
                         icon: "cross.case.fill",
-                        tint: Color(red: 0.85, green: 0.24, blue: 0.20)
+                        tint: HazardSeverity.heatRed.iconTint
                     )
 
                     if let checklist = copy.optionalChecklistCta {
@@ -46,107 +47,92 @@ struct InfoView: View {
                     InfoSectionCard(
                         section: copy.uvSection,
                         icon: "sun.max.fill",
-                        tint: Color(red: 0.89, green: 0.72, blue: 0.11)
+                        tint: DashboardPalette.uvIcon
                     )
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 20)
+                .frame(maxWidth: 720)
+                .frame(maxWidth: .infinity)
             }
+            .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle(copy.infoScreenTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(copy.settingsCloseButton) {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(role: .close) {
                         dismiss()
                     }
-                    .font(.system(.body, design: .rounded).weight(.semibold))
+                    .accessibilityLabel(copy.settingsCloseButton)
                 }
             }
-            .background(Color(uiColor: .systemGroupedBackground))
         }
     }
 
     @ViewBuilder
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(.headline, design: .rounded).weight(.bold))
+            .font(.headline)
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
 private struct InfoScaleCard: View {
     let title: String
-    let entries: [(level: String, title: String, tint: Color)]
+    let entries: [(severity: HazardSeverity, title: String)]
+    let copy: Copybook
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 10) {
                 Text(title)
-                    .font(.system(.headline, design: .rounded).weight(.bold))
+                    .font(.headline)
                     .foregroundStyle(.primary)
 
                 HStack(spacing: 8) {
                     ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
                         Capsule()
-                            .fill(entry.tint.opacity(0.9))
+                            .fill(entry.severity.fill)
                             .frame(maxWidth: .infinity)
                             .frame(height: 8)
                     }
                 }
+                .accessibilityHidden(true)
             }
 
             ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
                 HStack(alignment: .center, spacing: 14) {
-                    Text(entry.level)
-                        .font(.system(size: 16, weight: .black, design: .rounded))
-                        .foregroundStyle(.white)
-                        .frame(width: 38, height: 38)
-                        .background(
-                            LinearGradient(
-                                colors: [entry.tint, entry.tint.opacity(0.82)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            in: Circle()
-                        )
-                        .shadow(color: entry.tint.opacity(0.28), radius: 10, x: 0, y: 4)
+                    VStack(spacing: 2) {
+                        Image(systemName: entry.severity.symbol)
+                            .font(.caption.weight(.bold))
+                        Text("\(entry.severity.level)")
+                            .font(.headline.weight(.black))
+                    }
+                    .foregroundStyle(entry.severity.onFill)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .background(entry.severity.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                     Text(entry.title)
-                        .font(.system(.body, design: .rounded).weight(.semibold))
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 14)
+                .padding(12)
                 .background(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(entry.tint.opacity(0.10))
+                        .fill(entry.severity.fill.opacity(0.12))
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(entry.tint.opacity(0.18), lineWidth: 1)
-                )
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(copy.severityDescription(entry.severity)): \(entry.title)")
             }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(uiColor: .secondarySystemGroupedBackground),
-                            Color(uiColor: .secondarySystemGroupedBackground).opacity(0.94)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.black.opacity(0.05), lineWidth: 1)
+                .fill(Color(uiColor: .secondarySystemGroupedBackground))
         )
     }
 }
@@ -156,22 +142,17 @@ private struct InfoIntroCard: View {
 
     var body: some View {
         Text(text)
-            .font(.system(.body, design: .rounded).weight(.medium))
+            .font(.body.weight(.medium))
             .foregroundStyle(.primary)
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.99, green: 0.95, blue: 0.88),
-                                Color(red: 0.98, green: 0.90, blue: 0.80)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                    .fill(Color(uiColor: .secondarySystemGroupedBackground))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(HazardSeverity.heatOrange.fill.opacity(0.14))
+                    }
             )
     }
 }
@@ -185,19 +166,20 @@ private struct InfoSectionCard: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .center, spacing: 10) {
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.headline)
                     .foregroundStyle(tint)
+                    .accessibilityHidden(true)
 
                 Text(section.title)
-                    .font(.system(.headline, design: .rounded).weight(.bold))
+                    .font(.headline)
                     .foregroundStyle(.primary)
             }
 
             ForEach(Array(section.groups.enumerated()), id: \.offset) { index, group in
                 VStack(alignment: .leading, spacing: 10) {
                     Text(group.title)
-                        .font(.system(.subheadline, design: .rounded).weight(.bold))
-                        .foregroundStyle(tint)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.primary)
 
                     if group.bullets.isEmpty {
                         EmptyView()
@@ -238,10 +220,11 @@ private struct BulletRow: View {
                 Circle()
                     .fill(tint)
                     .frame(width: 7, height: 7)
-                    .padding(.top, 6)
+                    .padding(.top, 7)
+                    .accessibilityHidden(true)
 
                 Text(bullet.text)
-                    .font(.system(.body, design: .rounded))
+                    .font(.body)
                     .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -250,14 +233,13 @@ private struct BulletRow: View {
                 Link(destination: cta.url) {
                     HStack(spacing: 8) {
                         Image(systemName: "phone.fill")
-                            .font(.system(size: 13, weight: .bold))
                         Text(cta.label)
-                            .font(.system(.footnote, design: .rounded).weight(.bold))
                     }
+                    .font(.footnote.weight(.bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(tint, in: Capsule())
+                    .frame(minHeight: 44)
+                    .background(HazardSeverity.heatRed.fill, in: Capsule())
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -272,13 +254,13 @@ private struct InfoChecklistCard: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "arrow.up.right.square.fill")
-                .font(.system(size: 20, weight: .bold))
+                .font(.title3.weight(.bold))
                 .foregroundStyle(Color.white)
                 .frame(width: 42, height: 42)
                 .background(Color(red: 0.24, green: 0.68, blue: 0.89), in: Circle())
 
             Text(label)
-                .font(.system(.headline, design: .rounded).weight(.bold))
+                .font(.headline)
                 .foregroundStyle(.primary)
 
             Spacer(minLength: 0)

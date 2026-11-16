@@ -3,11 +3,15 @@ package org.entner.HitzeV.ui.copy
 import org.entner.HitzeV.model.AppLanguage
 import org.entner.HitzeV.model.HazardSeverity
 import org.entner.HitzeV.model.ResolvedLanguage
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.time.format.TextStyle
 import java.util.Locale
 
-class Copybook(private val language: ResolvedLanguage) {
+class Copybook(val language: ResolvedLanguage) {
     data class InfoBullet(
         val text: String,
         val cta: InfoCta? = null
@@ -28,17 +32,20 @@ class Copybook(private val language: ResolvedLanguage) {
         val url: String
     )
 
-    private val uiLocale: Locale = Locale.forLanguageTag(language.localeTag)
+    val locale: Locale = language.locale
+
+    private val missing = mutableListOf<String>()
+
+    /** English keys without a translation for [language]; those fall back to English. */
+    val missingTranslations: List<String>
+        get() = missing.toList()
 
     fun t(german: String, english: String): String = when (language) {
         ResolvedLanguage.DE -> german
         ResolvedLanguage.EN -> english
-        else -> requireNotNull(
-            CopybookSupplementalTranslations.translation(language, english)
-                ?: CopybookTranslationCatalog.translation(language, english)
-        ) {
-            "Missing Copybook translation for ${language.code}: $english"
-        }
+        else -> CopybookSupplementalTranslations.translation(language, english)
+            ?: CopybookTranslationCatalog.translation(language, english)
+            ?: english.also { missing += it }
     }
 
     private fun bulletLines(german: String, english: String): List<InfoBullet> = t(german, english)
@@ -47,7 +54,7 @@ class Copybook(private val language: ResolvedLanguage) {
         .filter { it.isNotEmpty() }
         .map { InfoBullet(text = it) }
 
-    val shortTitle: String = t("HitzeV", "Heat-V")
+    val shortTitle: String = "HitzeV"
     val dashboardTitle: String = t("Sicher durch die Hitze", "Heat Safety at a Glance")
     val dashboardSubtitle: String = t(
         "Ampelstatus, UV und Arbeitsplätze live auf einen Blick.",
@@ -73,13 +80,24 @@ class Copybook(private val language: ResolvedLanguage) {
     val refreshButton: String = t("Daten aktualisieren", "Refresh data")
     val deleteWorkplace: String = t("Arbeitsplatz löschen", "Delete workplace")
     val cancelButton: String = t("Abbrechen", "Cancel")
-    val settingsCloseButton: String = t("Schließen", "Close")
+    val okButton: String = "OK"
+    val backButton: String = t("Zurück", "Back")
+    val moreOptionsLabel: String = t("Weitere Optionen", "More options")
+    val clearTextLabel: String = t("Text löschen", "Clear text")
     val settingsTitle: String = t("Einstellungen", "Settings")
     val infoScreenTitle: String = t("Info", "Info")
     val infoButtonLabel: String = t("Info öffnen", "Open info")
-    val notAvailableShort: String = t("n/v", "n/a")
+    val notAvailableShort: String = "—"
+    val notAvailableSpoken: String = t("n/v", "n/a")
     val warningAllDay: String = t("Ganztägig", "All day")
     val heatWarningLevelLabel: String = t("Hitzewarnstufe", "Heat warning level")
+    val statusUnknown: String = t("Status unbekannt", "Status unknown")
+    val warningsUnavailableMessage: String = t(
+        "Aktuelle Warnungen konnten nicht geladen werden. Bitte Verbindung prüfen und aktualisieren.",
+        "Current warnings could not be loaded. Please check your connection and refresh."
+    )
+    val worksiteLoadFailed: String = t("Daten konnten nicht geladen werden.", "Data could not be loaded.")
+    val retryButton: String = t("Erneut versuchen", "Retry")
     val addWorkplaceFailureTitle: String = t("Hinzufügen nicht möglich", "Unable to add")
     val addOutsideAustriaMessage: String = t(
         "Dieses Gebiet liegt vermutlich außerhalb Österreichs oder wird von GeoSphere nicht erkannt. Ein Hinzufügen ist nicht möglich.",
@@ -94,7 +112,7 @@ class Copybook(private val language: ResolvedLanguage) {
         "Passe Darstellung, Sprache und rechtliche Hinweise an.",
         "Adjust appearance, language, and legal details."
     )
-    val uvWarningBadge5Plus: String = t("UV >= 5", "UV >= 5")
+    val uvWarningBadge5Plus: String = "UV ≥ 5"
     val uvInfoDetail5Plus: String = t(
         "Ab UV-Index 5 steigt die Belastung deutlich. Schutzkleidung, Kopfbedeckung, Sonnenbrille und Sonnencreme konsequent verwenden.",
         "At UV index 5 and above, exposure increases significantly. Consistently use protective clothing, head covering, sunglasses, and sunscreen."
@@ -117,6 +135,18 @@ class Copybook(private val language: ResolvedLanguage) {
         "Beim Ausschalten werden alle aktuellen Push-Abos sofort entfernt.",
         "Turning this off immediately removes all current push subscriptions."
     )
+    val notificationsBlockedMessage: String = t(
+        "Benachrichtigungen für HitzeV sind in den Systemeinstellungen ausgeschaltet. Hitzewarnungen können erst zugestellt werden, wenn du sie dort erlaubst.",
+        "Notifications for HitzeV are turned off in the system settings. Heat warnings can only be delivered once you allow them there."
+    )
+    val openNotificationSettingsButton: String = t(
+        "Benachrichtigungseinstellungen öffnen",
+        "Open notification settings"
+    )
+    val pushSyncFailedMessage: String = t(
+        "Push-Abos konnten nicht aktualisiert werden. Bitte später erneut versuchen.",
+        "Push subscriptions could not be updated. Please try again later."
+    )
     val pushWorksitesSectionTitle: String = t(
         "Arbeitsplätze für Push",
         "Worksites for push"
@@ -131,18 +161,18 @@ class Copybook(private val language: ResolvedLanguage) {
     )
     val aboutSection: String = t("Info & Rechtliches", "Info & Legal")
     val dataSourceLine: String = t("Datenquelle: GeoSphere Austria", "Data source: GeoSphere Austria")
-    val geocodingAttributionLine: String = "Geocoding data © OpenStreetMap contributors"
+    val weatherAttributionLine: String = t(
+        "Wetterdaten: Open-Meteo.com (CC BY 4.0)",
+        "Weather data: Open-Meteo.com (CC BY 4.0)"
+    )
+    val geocodingAttributionLine: String = t(
+        "Geodaten © OpenStreetMap-Mitwirkende",
+        "Geocoding data © OpenStreetMap contributors"
+    )
     val themeSystem: String = t("System", "System")
     val themeLight: String = t("Hell", "Light")
     val themeDark: String = t("Dunkel", "Dark")
     val languageSection: String = t("Sprache", "Language")
-    val developerSection: String = t("Entwicklung", "Development")
-    val customGeoSphereUrlLabel: String = t("GeoSphere Test-URL", "GeoSphere test URL")
-    val customGeoSphereUrlHint: String = t(
-        "Wenn gesetzt, wird diese URL statt des GeoSphere-Servers verwendet.",
-        "If set, this URL is used instead of the GeoSphere server."
-    )
-    val customGeoSphereUrlPlaceholder: String = "https://example.com/geosphere.json"
     val machineTranslationDisclaimer: String = when (language) {
         ResolvedLanguage.DE -> "Texte in anderen Sprachen werden maschinell aus dem Deutschen übersetzt. Für Vollständigkeit und Korrektheit dieser Übersetzungen kann keine Gewähr übernommen werden."
         ResolvedLanguage.BG -> "Текстовете на други езици са машинно преведени от немски. Не се дава гаранция за пълнотата или точността на тези преводи."
@@ -179,21 +209,24 @@ class Copybook(private val language: ResolvedLanguage) {
     )
     val onboardingPushTitle: String = t("Bleib informiert", "Stay informed")
     val onboardingPushText: String = t(
-        "Damit wir dich bei gefährlichen Hitzewerten an deinen Arbeitsplätzen rechtzeitig warnen können, benötigen wir deine Erlaubnis für Push-Benachrichtigungen. Push-Nachrichten sind aktuell nur für Hitzewarnmeldungen auf iOS und Android verfügbar. UV-Warnmeldungen können derzeit nicht per Push versendet werden. Bitte erlaube diese im nächsten Schritt.",
-        "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Please allow them in the next step."
+        "Damit wir dich bei gefährlichen Hitzewerten an deinen Arbeitsplätzen rechtzeitig warnen können, benötigen wir deine Erlaubnis für Push-Benachrichtigungen. Push-Nachrichten sind aktuell nur für Hitzewarnmeldungen auf iOS und Android verfügbar. UV-Warnmeldungen können derzeit nicht per Push versendet werden.",
+        "So that we can warn you in time about dangerous heat levels at your workplaces, we need your permission for push notifications. Push notifications are currently only available for heat warnings on iOS and Android. UV warnings cannot be sent as push notifications at the moment."
     )
-    val onboardingAllowButton: String = t("Erlauben & Loslegen", "Allow & Start")
-    val onboardingSkipButton: String = t("Später / Überspringen", "Later / Skip")
+    val continueButton: String = t("Weiter", "Continue")
     val infoScreenHeatMeasuresTitle: String = t("Hitze-Schutzmaßnahmen", "Heat Protection Measures")
     val infoScreenHeatScaleTitle: String = t("Skala der Hitzewarnstufen", "Heat warning scale")
     val infoScreenUvMeasuresTitle: String = t("UV-Schutzmaßnahmen", "UV Protection Measures")
-    val infoScreenUvLevel5Title: String = t("UV-Index >= 5", "UV Index >= 5")
+    val infoScreenUvLevel5Title: String = t("UV-Index ≥ 5", "UV index ≥ 5")
     val infoScreenLevel2Title: String = t("2 (gefühlte Temperatur ≥ 30 °C)", "2 (apparent temperature ≥ 30 °C)")
     val infoScreenLevel3Title: String = t("3 (gefühlte Temperatur ≥ 35 °C)", "3 (apparent temperature ≥ 35 °C)")
     val infoScreenLevel4Title: String = t("4 (gefühlte Temperatur ≥ 40 °C)", "4 (apparent temperature ≥ 40 °C)")
     val emergencyCallCta: InfoCta = InfoCta(
         label = t("Jetzt 144 anrufen", "Call 144 now"),
         url = "tel:144"
+    )
+    val callNotSupportedMessage: String = t(
+        "Anrufe werden auf diesem Gerät nicht unterstützt. Bitte 144 wählen.",
+        "Calls are not supported on this device. Please dial 144."
     )
     val infoIntro: String = t(
         "Ab einer Hitzewarnung der Stufe 2 (ab 30 °C) müssen ein Maßnahmenprogramm und Notfallmaßnahmen umgesetzt werden. Mögliche Maßnahmen sind z.B.",
@@ -322,15 +355,6 @@ class Copybook(private val language: ResolvedLanguage) {
             )
         )
     )
-    val optionalChecklistCta: InfoCta? = INFO_CHECKLIST_URL?.let { url ->
-        InfoCta(
-            label = t(
-                "Hier geht’s zur Hitzeschutzcheckliste für Betriebe",
-                "Heat protection checklist for businesses"
-            ),
-            url = url
-        )
-    }
     val uvSection: InfoSection = InfoSection(
         title = infoScreenUvMeasuresTitle,
         groups = listOf(
@@ -354,8 +378,31 @@ class Copybook(private val language: ResolvedLanguage) {
         "Der Arbeitsplatz konnte nicht hinzugefügt werden.",
         "The workplace could not be added."
     )
+    private val systemLanguageLabel: String = t("Systemsprache", "System language")
+    private val todayLabel: String = t("Heute", "Today")
+    private val andWord: String = t("und", "and")
+    private val levelFormat: String = t("Stufe %d", "Level %d")
+    private val updatedFormat: String = t("Stand %s", "Updated %s")
+    private val uvOnlyActionFormat: String = t(
+        "Arbeitsplätze mit UV-Index 5 oder höher: %d. UV-Schutzmaßnahmen umsetzen.",
+        "Workplaces with UV index 5 or higher: %d. Implement UV protection measures."
+    )
+    private val severityStable: String = t("Stabil", "Stable")
+    private val severityElevated: String = t("Erhöht", "Elevated")
+    private val severityHigh: String = t("Hoch", "High")
+    private val severityCritical: String = t("Kritisch", "Critical")
+    private val actionClear: String = t("Alles ruhig. Standardmaßnahmen reichen aus.", "All clear. Standard precautions are sufficient.")
+    private val actionYellow: String = t("Pausen und Schatten erhöhen.", "Increase breaks and shade usage.")
+    private val actionOrange: String = t("Arbeitszeiten anpassen und Teams aktiv schützen.", "Adjust schedules and actively protect teams.")
+    private val actionRed: String = t(
+        "Sofort Schutzmaßnahmen nach Hitze-V umsetzen.",
+        "Take protective measures as required by the Hitze-V immediately."
+    )
 
-    fun copyrightLine(year: Int): String = "© $year SFK Robert Lembacher und Dr. Thomas Entner"
+    private val shortTimeFormatter: DateTimeFormatter =
+        DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale)
+
+    fun copyrightLine(year: Int): String = "© $year SFK Robert Lembacher $andWord Dr. Thomas Entner"
 
     fun deleteWorkplaceMessage(name: String): String = when (language) {
         ResolvedLanguage.DE -> "Der Arbeitsplatz \"$name\" wird gelöscht."
@@ -385,75 +432,59 @@ class Copybook(private val language: ResolvedLanguage) {
         ResolvedLanguage.TR -> "\"$name\" iş yeri silinecek."
     }
 
-    fun todayTitle(date: LocalDate): String = if (date == LocalDate.now()) t("Heute", "Today") else weekdayShort(date)
+    fun levelLabel(level: Int): String = String.format(locale, levelFormat, level)
 
-    fun weekdayShort(date: LocalDate): String = date.dayOfWeek.getDisplayName(TextStyle.SHORT, uiLocale).uppercase(uiLocale)
+    fun updatedAt(instant: Instant, zoneId: ZoneId = ZoneId.systemDefault()): String =
+        String.format(locale, updatedFormat, shortTimeFormatter.format(instant.atZone(zoneId)))
+
+    fun todayTitle(date: LocalDate, today: LocalDate): String = if (date == today) todayLabel else weekdayShort(date)
+
+    fun weekdayShort(date: LocalDate): String = date.dayOfWeek.getDisplayName(TextStyle.SHORT, locale).uppercase(locale)
 
     fun languageOption(language: AppLanguage): String {
         if (language == AppLanguage.SYSTEM) {
-            return t("Systemsprache", "System language")
+            return systemLanguageLabel
         }
 
-        val targetLocale = Locale.forLanguageTag(language.resolvedLanguage().localeTag)
-        val localized = targetLocale.getDisplayLanguage(uiLocale).ifBlank {
+        val targetLocale = language.resolvedLanguage().locale
+        val localized = targetLocale.getDisplayLanguage(locale).ifBlank {
             targetLocale.getDisplayLanguage(targetLocale)
         }
-        return localized.replaceFirstChar { if (it.isLowerCase()) it.titlecase(uiLocale) else it.toString() }
+        return localized.replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
     }
 
     fun formatUv(value: Double?): String {
         if (value == null) return notAvailableShort
-        return "UV ${String.format(uiLocale, "%.1f", value)}"
+        return "UV ${String.format(locale, "%.1f", value)}"
     }
 
     fun formatTemperature(value: Double?): String {
         if (value == null) return notAvailableShort
-        return String.format(uiLocale, "%.1f C", value)
+        return String.format(locale, "%.1f °C", value)
     }
 
-    fun formatForecastTemperature(value: Double?): String = value?.let { String.format(uiLocale, "%.0f°", it) } ?: "-"
+    fun formatForecastTemperature(value: Double?): String =
+        value?.let { String.format(locale, "%.0f°", it) } ?: notAvailableShort
+
+    /** Spoken form: "—" is not announced meaningfully by screen readers. */
+    fun spoken(value: String): String = if (value == notAvailableShort) notAvailableSpoken else value
 
     fun severityHeadline(severity: HazardSeverity): String = when (severity) {
-        HazardSeverity.NONE, HazardSeverity.COLD_YELLOW, HazardSeverity.COLD_ORANGE, HazardSeverity.COLD_RED -> t("Stabil", "Stable")
-        HazardSeverity.HEAT_YELLOW -> t("Erhöht", "Elevated")
-        HazardSeverity.HEAT_ORANGE -> t("Hoch", "High")
-        HazardSeverity.HEAT_RED -> t("Kritisch", "Critical")
+        HazardSeverity.NONE -> severityStable
+        HazardSeverity.HEAT_YELLOW -> severityElevated
+        HazardSeverity.HEAT_ORANGE -> severityHigh
+        HazardSeverity.HEAT_RED -> severityCritical
     }
 
     fun severityAction(severity: HazardSeverity): String = when (severity) {
-        HazardSeverity.NONE, HazardSeverity.COLD_YELLOW, HazardSeverity.COLD_ORANGE, HazardSeverity.COLD_RED ->
-            t("Alles ruhig. Standardmaßnahmen reichen aus.", "All clear. Standard precautions are sufficient.")
-        HazardSeverity.HEAT_YELLOW -> t("Pausen und Schatten erhöhen.", "Increase breaks and shade usage.")
-        HazardSeverity.HEAT_ORANGE -> t("Arbeitszeiten anpassen und Teams aktiv schützen.", "Adjust schedules and actively protect teams.")
-        HazardSeverity.HEAT_RED -> t("Sofort HitzeV Schutzmaßnahmen umsetzen.", "Apply Heat-V protective measures immediately.")
-    }
-
-    fun dashboardRiskHeadline(isUvOnlyElevated: Boolean, severity: HazardSeverity): String =
-        if (isUvOnlyElevated) severityHeadline(HazardSeverity.HEAT_YELLOW) else severityHeadline(severity)
-
-    fun dashboardActionText(
-        isUvOnlyElevated: Boolean,
-        severity: HazardSeverity,
-        uvAffectedWorksitesCount: Int
-    ): String = if (isUvOnlyElevated) {
-        uvOnlyAction(uvAffectedWorksitesCount)
-    } else {
-        severityAction(severity)
+        HazardSeverity.NONE -> actionClear
+        HazardSeverity.HEAT_YELLOW -> actionYellow
+        HazardSeverity.HEAT_ORANGE -> actionOrange
+        HazardSeverity.HEAT_RED -> actionRed
     }
 
     fun uvOnlyAction(worksitesCount: Int): String {
-        val format = if (worksitesCount == 1) {
-            t(
-                "%d Arbeitsplatz über UV-Index 5. UV-Schutzmaßnahmen umsetzen.",
-                "%d workplace above UV index 5. Implement UV protection measures."
-            )
-        } else {
-            t(
-                "%d Arbeitsplätze über UV-Index 5. UV-Schutzmaßnahmen umsetzen.",
-                "%d workplaces above UV index 5. Implement UV protection measures."
-            )
-        }
-        val message = String.format(uiLocale, format, worksitesCount)
+        val message = String.format(locale, uvOnlyActionFormat, worksitesCount)
         val sentenceBreakIndex = message.indexOf(". ")
         if (sentenceBreakIndex == -1) {
             return message
@@ -464,37 +495,4 @@ class Copybook(private val language: ResolvedLanguage) {
             append(message, sentenceBreakIndex + 2, message.length)
         }
     }
-
-    companion object {
-        private val INFO_CHECKLIST_URL: String? = null
-    }
 }
-
-private val ResolvedLanguage.localeTag: String
-    get() = when (this) {
-        ResolvedLanguage.DE -> "de-AT"
-        ResolvedLanguage.BG -> "bg-BG"
-        ResolvedLanguage.DA -> "da-DK"
-        ResolvedLanguage.EN -> "en-US"
-        ResolvedLanguage.ET -> "et-EE"
-        ResolvedLanguage.FI -> "fi-FI"
-        ResolvedLanguage.FR -> "fr-FR"
-        ResolvedLanguage.EL -> "el-GR"
-        ResolvedLanguage.GA -> "ga-IE"
-        ResolvedLanguage.IT -> "it-IT"
-        ResolvedLanguage.HR -> "hr-HR"
-        ResolvedLanguage.LV -> "lv-LV"
-        ResolvedLanguage.LT -> "lt-LT"
-        ResolvedLanguage.MT -> "mt-MT"
-        ResolvedLanguage.NL -> "nl-NL"
-        ResolvedLanguage.PL -> "pl-PL"
-        ResolvedLanguage.PT -> "pt-PT"
-        ResolvedLanguage.RO -> "ro-RO"
-        ResolvedLanguage.SV -> "sv-SE"
-        ResolvedLanguage.SK -> "sk-SK"
-        ResolvedLanguage.SL -> "sl-SI"
-        ResolvedLanguage.ES -> "es-ES"
-        ResolvedLanguage.CS -> "cs-CZ"
-        ResolvedLanguage.HU -> "hu-HU"
-        ResolvedLanguage.TR -> "tr-TR"
-    }

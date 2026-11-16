@@ -6,27 +6,31 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
+        android:name=".HitzeVApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
+        android:enableOnBackInvokedCallback="true"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:localeConfig="@xml/locales_config"
-        android:name=".HitzeVApplication"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@style/Theme.HitzeV">
+        android:theme="@style/Theme.HitzeV"
+        tools:targetApi="33">
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="heat_warning_alerts" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
-            android:resource="@mipmap/ic_launcher_monochrome" />
+            android:resource="@drawable/ic_stat_heat_warning" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification_accent" />
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="@string/app_name"
             android:theme="@style/Theme.HitzeV.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -37,11 +41,20 @@
 
         <service
             android:name=".notifications.HitzeFirebaseMessagingService"
-            android:exported="false"
-            tools:targetApi="o">
+            android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
+        </service>
+
+        <!-- Persists AppCompatDelegate.setApplicationLocales() on API < 33. -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
         </service>
     </application>
 

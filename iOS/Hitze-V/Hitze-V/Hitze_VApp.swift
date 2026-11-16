@@ -6,37 +6,39 @@
 //
 
 import SwiftUI
-import FirebaseCore
 
 @main
 struct Hitze_VApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @AppStorage("app.theme") private var themeRawValue = AppTheme.system.rawValue
-    
+
     @State private var isShowingLaunchScreen = true
 
     init() {
-        if FirebaseApp.app() == nil {
-            FirebaseApp.configure()
-        }
+        FirebaseRegistrationManager.shared.configureIfNeeded()
     }
 
     var body: some Scene {
         WindowGroup {
-            ZStack {
-                Color("LaunchBackground")
-                    .ignoresSafeArea()
+            if FirebaseRegistrationManager.isRunningUnitTests {
+                // Unit-test host: no dashboard, no network.
+                Color.clear
+            } else {
+                ZStack {
+                    Color("LaunchBackground")
+                        .ignoresSafeArea()
 
-                ContentView()
-                    .preferredColorScheme(AppTheme(rawValue: themeRawValue)?.colorScheme)
-                
-                if isShowingLaunchScreen {
-                    LaunchView(isPresented: $isShowingLaunchScreen)
-                        .transition(.opacity)
-                        .zIndex(1) // Ensure it stays on top while fading out
+                    ContentView()
+                        .preferredColorScheme(AppTheme(rawValue: themeRawValue)?.colorScheme)
+
+                    if isShowingLaunchScreen {
+                        LaunchView(isPresented: $isShowingLaunchScreen)
+                            .transition(.opacity)
+                            .zIndex(1) // Ensure it stays on top while fading out
+                    }
                 }
+                .animation(.easeInOut(duration: 0.4), value: isShowingLaunchScreen)
             }
-            .animation(.easeInOut(duration: 0.4), value: isShowingLaunchScreen)
         }
     }
 }

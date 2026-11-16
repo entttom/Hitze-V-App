@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">HitzeV</string>
-    <string name="notification_channel_name">Hitzewarnungen</string>
-    <string name="notification_channel_description">Benachrichtigungen bei Hitzewarnungen</string>
+    <string name="app_name" translatable="false">HitzeV</string>
+    <string name="notification_channel_name">Heat warnings</string>
+    <string name="notification_channel_description">Notifications for heat warnings</string>
 </resources>

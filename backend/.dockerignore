@@ -2,3 +2,11 @@ node_modules
 dist
 npm-debug.log
 .DS_Store
+.env
+.env.*
+*firebase-adminsdk*.json
+.claude
+example_response.json
+gemliste_knz.xls
+test
+tsconfig.test.json

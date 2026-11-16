@@ -1,598 +1,336 @@
+import CryptoKit
 import Foundation
-import CoreLocation
-import Combine
-import FirebaseMessaging
+import os
+
+struct PushSyncResult: Equatable, Sendable {
+    var failedGKZs: Set<String>
+    var errorDescription: String?
+
+    static let success = PushSyncResult(failedGKZs: [], errorDescription: nil)
+}
+
+/// FCM operations the subscription logic needs; wrapped so the logic is testable without Firebase.
+protocol PushTopicClient: AnyObject, Sendable {
+    func currentToken() async throws -> String
+    func subscribe(toTopic topic: String) async throws
+    func unsubscribe(fromTopic topic: String) async throws
+    func deleteToken() async throws
+}
+
+nonisolated let pushLogger = Logger(subsystem: "org.entner.HitzeV", category: "Push")
+
+final class PushSubscriptionStore {
+    private enum Key {
+        static let desired = "push.v2.desiredGKZs"
+        static let enabled = "push.v2.enabled"
+        static let subscribed = "push.v2.subscribedGKZs"
+        static let tokenHash = "push.v2.subscriptionTokenHash"
+        static let migrated = "push.v2.migratedLegacyGKZs"
+        static let tokenDeleted = "push.v2.tokenDeleted"
+        static let legacySubscribed = "subscription_manager.subscribedMunicipalityIDs"
+        static let legacyLanguage = "subscription_manager.lastSubscribedLanguageCode"
+    }
+
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
+    }
+
+    var desiredGKZs: Set<String> {
+        get { stringSet(Key.desired) }
+        set { setStringSet(newValue, Key.desired) }
+    }
+
+    var enabled: Bool {
+        get { defaults.bool(forKey: Key.enabled) }
+        set { defaults.set(newValue, forKey: Key.enabled) }
+    }
+
+    /// False until the app has stored a v2 desired state once. An install upgraded from ≤ 1.2.4
+    /// starts without one, and its legacy topics must survive until the dashboard has synced.
+    var hasDesiredState: Bool {
+        defaults.object(forKey: Key.enabled) != nil
+    }
+
+    /// GKZs whose v2 topic is confirmed subscribed for the token in `subscriptionTokenHash`.
+    var subscribedGKZs: Set<String> {
+        get { stringSet(Key.subscribed) }
+        set { setStringSet(newValue, Key.subscribed) }
+    }
+
+    var subscriptionTokenHash: String? {
+        get { defaults.string(forKey: Key.tokenHash) }
+        set { defaults.set(newValue, forKey: Key.tokenHash) }
+    }
+
+    /// GKZs whose legacy topics have all been unsubscribed.
+    var migratedGKZs: Set<String> {
+        get { stringSet(Key.migrated) }
+        set { setStringSet(newValue, Key.migrated) }
+    }
+
+    var tokenDeleted: Bool {
+        get { defaults.bool(forKey: Key.tokenDeleted) }
+        set { defaults.set(newValue, forKey: Key.tokenDeleted) }
+    }
+
+    /// GKZs subscribed by app versions ≤ 1.2.4 (legacy topics).
+    var legacyGKZs: Set<String> {
+        stringSet(Key.legacySubscribed)
+    }
+
+    func removeLegacyState() {
+        defaults.removeObject(forKey: Key.legacySubscribed)
+        defaults.removeObject(forKey: Key.legacyLanguage)
+    }
+
+    private func stringSet(_ key: String) -> Set<String> {
+        PushTopics.normalizedGKZs(defaults.stringArray(forKey: key) ?? [])
+    }
+
+    private func setStringSet(_ value: Set<String>, _ key: String) {
+        defaults.set(value.sorted(), forKey: key)
+    }
+}
+
+/// Applies the persisted desired state to FCM. Not reentrant; `SubscriptionManager` serializes calls.
+final class PushTopicSyncEngine {
+    private let client: any PushTopicClient
+    private let store: PushSubscriptionStore
+    /// Token for which every desired topic was re-subscribed in this process.
+    private var resubscribedTokenHash: String?
+
+    init(client: any PushTopicClient, store: PushSubscriptionStore) {
+        self.client = client
+        self.store = store
+    }
+
+    func run(shouldStopMigrating: () -> Bool) async -> PushSyncResult {
+        // An empty desired state here would tear down (delete the token, drop legacy topics)
+        // before an upgraded install has subscribed anything in v2.
+        guard store.hasDesiredState else {
+            return .success
+        }
+        let desired = store.enabled ? store.desiredGKZs : []
+        if desired.isEmpty {
+            return await tearDown()
+        }
+
+        let token: String
+        do {
+            token = try await client.currentToken()
+        } catch {
+            pushLogger.error("FCM token unavailable: \(error.localizedDescription, privacy: .public)")
+            return PushSyncResult(failedGKZs: desired, errorDescription: error.localizedDescription)
+        }
+
+        let tokenHash = Self.hash(token)
+        if store.subscriptionTokenHash != tokenHash {
+            store.subscribedGKZs = []
+            store.subscriptionTokenHash = tokenHash
+        }
+        store.tokenDeleted = false
+
+        let plan = PushSubscriptionPlan.make(
+            desired: desired,
+            subscribed: store.subscribedGKZs,
+            migrated: store.migratedGKZs,
+            legacyCandidates: store.legacyGKZs,
+            resubscribeAll: resubscribedTokenHash != tokenHash,
+            tokenDeleted: false,
+            tokenUsedForSubscriptions: true
+        )
+
+        var failed = Set<String>()
+        var firstError: String?
+
+        for gkz in plan.subscribe.sorted() {
+            do {
+                try await client.subscribe(toTopic: PushTopics.v2Topic(for: gkz))
+                store.subscribedGKZs.insert(gkz)
+            } catch {
+                store.subscribedGKZs.remove(gkz)
+                failed.insert(gkz)
+                firstError = firstError ?? error.localizedDescription
+                pushLogger.error("Subscribe failed for \(gkz, privacy: .private): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        resubscribedTokenHash = tokenHash
+
+        for gkz in plan.unsubscribe.sorted() {
+            do {
+                try await client.unsubscribe(fromTopic: PushTopics.v2Topic(for: gkz))
+                store.subscribedGKZs.remove(gkz)
+            } catch {
+                failed.insert(gkz)
+                firstError = firstError ?? error.localizedDescription
+                pushLogger.error("Unsubscribe failed for \(gkz, privacy: .private): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        for gkz in plan.migrate.sorted() {
+            if shouldStopMigrating() { break }
+            // Dropping the legacy topics before v2 is confirmed would leave this GKZ without pushes.
+            if desired.contains(gkz), !store.subscribedGKZs.contains(gkz) { continue }
+            if await unsubscribeAll(PushTopics.legacyTopics(for: gkz)) {
+                store.migratedGKZs.insert(gkz)
+            } else {
+                pushLogger.notice("Legacy topic cleanup incomplete for \(gkz, privacy: .private); retrying on next sync")
+            }
+        }
+        removeLegacyStateIfMigrated()
+
+        return PushSyncResult(failedGKZs: failed, errorDescription: firstError)
+    }
+
+    private func tearDown() async -> PushSyncResult {
+        let subscribed = store.subscribedGKZs
+        let plan = PushSubscriptionPlan.make(
+            desired: [],
+            subscribed: subscribed,
+            migrated: store.migratedGKZs,
+            legacyCandidates: store.legacyGKZs,
+            resubscribeAll: false,
+            tokenDeleted: store.tokenDeleted,
+            tokenUsedForSubscriptions: store.subscriptionTokenHash != nil
+        )
+        guard plan.deleteToken || !plan.unsubscribe.isEmpty else {
+            return .success
+        }
+
+        var failed = Set<String>()
+        var firstError: String?
+        for gkz in plan.unsubscribe.sorted() {
+            do {
+                try await client.unsubscribe(fromTopic: PushTopics.v2Topic(for: gkz))
+                store.subscribedGKZs.remove(gkz)
+            } catch {
+                failed.insert(gkz)
+                firstError = firstError ?? error.localizedDescription
+            }
+        }
+
+        guard plan.deleteToken else {
+            return PushSyncResult(failedGKZs: failed, errorDescription: firstError)
+        }
+
+        do {
+            try await client.deleteToken()
+            store.migratedGKZs.formUnion(store.legacyGKZs.union(subscribed))
+            store.subscribedGKZs = []
+            store.subscriptionTokenHash = nil
+            store.tokenDeleted = true
+            resubscribedTokenHash = nil
+            removeLegacyStateIfMigrated()
+            return .success
+        } catch {
+            pushLogger.error("FCM token deletion failed: \(error.localizedDescription, privacy: .public)")
+            return PushSyncResult(failedGKZs: failed, errorDescription: firstError ?? error.localizedDescription)
+        }
+    }
+
+    private func unsubscribeAll(_ topics: [String]) async -> Bool {
+        let client = client
+        return await withTaskGroup(of: Bool.self) { group in
+            for topic in topics {
+                group.addTask {
+                    do {
+                        try await client.unsubscribe(fromTopic: topic)
+                        return true
+                    } catch {
+                        return false
+                    }
+                }
+            }
+            var allSucceeded = true
+            for await succeeded in group where !succeeded {
+                allSucceeded = false
+            }
+            return allSucceeded
+        }
+    }
+
+    private func removeLegacyStateIfMigrated() {
+        let legacy = store.legacyGKZs
+        if !legacy.isEmpty, legacy.isSubset(of: store.migratedGKZs) {
+            store.removeLegacyState()
+        }
+    }
+
+    private static func hash(_ token: String) -> String {
+        SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+}
 
 @MainActor
-final class SubscriptionManager: ObservableObject {
-    @Published private(set) var subscribedMunicipalityIDs: Set<String>
-    @Published private(set) var lastError: SubscriptionError?
+final class SubscriptionManager {
+    static let shared = SubscriptionManager(
+        client: FirebaseTopicClient(),
+        store: PushSubscriptionStore(defaults: .standard)
+    )
 
-    private let urlSession: URLSession
-    private let userDefaults: UserDefaults
-    private let userDefaultsKey = "subscription_manager.subscribedMunicipalityIDs"
-    private let languageDefaultsKey = "subscription_manager.lastSubscribedLanguageCode"
-    private let defaultGeoSphereBaseURL = "https://warnungen.zamg.at/wsapp/api/getWarningsForCoords"
-    private let networkTimeout: TimeInterval = 10
-    private let defaultLanguageCode = "en"
+    private let store: PushSubscriptionStore
+    private let engine: PushTopicSyncEngine
+    private var requestedTicket = 0
+    private var completedTicket = 0
+    private var worker: Task<Void, Never>?
+    private var waiters: [(ticket: Int, continuation: CheckedContinuation<PushSyncResult, Never>)] = []
 
-    init(urlSession: URLSession = .shared, userDefaults: UserDefaults = .standard) {
-        self.urlSession = urlSession
-        self.userDefaults = userDefaults
-
-        let persisted = userDefaults.stringArray(forKey: userDefaultsKey) ?? []
-        self.subscribedMunicipalityIDs = Set(persisted.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
-        self.lastError = nil
+    init(client: any PushTopicClient, store: PushSubscriptionStore) {
+        self.store = store
+        self.engine = PushTopicSyncEngine(client: client, store: store)
     }
 
-    private var geosphereBaseURL: String {
-        if AppFeatureFlags.enableCustomGeoSphereURLSetting {
-            let configuredURL = userDefaults.string(forKey: "network.customGeoSphereUrl")?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !configuredURL.isEmpty {
-                return configuredURL
+    /// Desired state = GKZs of worksites with push on. Serialized + coalesced internally,
+    /// never prompts for permission, never needs notification permission, no GeoSphere lookups.
+    func sync(desiredGKZs: Set<String>, enabled: Bool) async -> PushSyncResult {
+        store.desiredGKZs = PushTopics.normalizedGKZs(desiredGKZs)
+        store.enabled = enabled
+        return await enqueue()
+    }
+
+    /// GKZs that get pushes now or are meant to; kept while a worksite's GKZ is still unknown so
+    /// that an incomplete worksite list never removes a subscription.
+    var retainedGKZs: Set<String> {
+        let desired = store.hasDesiredState && store.enabled ? store.desiredGKZs : []
+        return desired
+            .union(store.subscribedGKZs)
+            .union(store.legacyGKZs.subtracting(store.migratedGKZs))
+    }
+
+    /// Re-applies the last desired state; used on app launch and FCM token refresh so restores,
+    /// reinstalls and token rotation heal themselves. No-op until `sync` has run once.
+    @discardableResult
+    func resyncStoredState() async -> PushSyncResult {
+        await enqueue()
+    }
+
+    private func enqueue() async -> PushSyncResult {
+        requestedTicket += 1
+        let ticket = requestedTicket
+        if worker == nil {
+            worker = Task { await self.drain() }
+        }
+        return await withCheckedContinuation { continuation in
+            waiters.append((ticket, continuation))
+        }
+    }
+
+    private func drain() async {
+        while completedTicket < requestedTicket {
+            let target = requestedTicket
+            let result = await engine.run(shouldStopMigrating: { [unowned self] in
+                self.requestedTicket > target
+            })
+            completedTicket = target
+
+            let ready = waiters.filter { $0.ticket <= target }
+            waiters.removeAll { $0.ticket <= target }
+            for waiter in ready {
+                waiter.continuation.resume(returning: result)
             }
         }
-
-        return defaultGeoSphereBaseURL
-    }
-
-    private var customGeoSphereURL: String? {
-        guard AppFeatureFlags.enableCustomGeoSphereURLSetting else {
-            return nil
-        }
-
-        let configuredURL = userDefaults.string(forKey: "network.customGeoSphereUrl")?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return configuredURL.isEmpty ? nil : configuredURL
-    }
-
-    /// Synchronisiert ein einzelnes Arbeitsplatz-Topic anhand einer Koordinate.
-    func syncTopic(for coordinate: CLLocationCoordinate2D, languageCode: String) async {
-        await syncTopics(for: [coordinate], languageCode: languageCode)
-    }
-
-    /// Synchronisiert Topics für mehrere Arbeitsplaetze. Bei Lookup-Teilfehlern wird nur additiv synchronisiert.
-    func syncTopics(for coordinates: [CLLocationCoordinate2D], languageCode: String) async {
-        lastError = nil
-        let desiredLanguageCode = normalizeLanguageCode(languageCode)
-        let storedLanguageCode = storedSubscribedLanguageCode()
-        let previousLanguageCode = storedLanguageCode ?? desiredLanguageCode
-
-        NSLog(
-            "Subscription sync started: coordinates=%ld desiredLanguage=%@ storedLanguage=%@ currentLocalMunicipalityIDs=%@",
-            coordinates.count,
-            desiredLanguageCode,
-            storedLanguageCode ?? "-",
-            formatMunicipalityIDs(subscribedMunicipalityIDs)
-        )
-
-        if coordinates.isEmpty {
-            let errors = await synchronizeTopics(
-                desiredMunicipalityIDs: [],
-                previousLanguageCode: previousLanguageCode,
-                desiredLanguageCode: desiredLanguageCode,
-                hasStoredLanguageCode: storedLanguageCode != nil,
-                allowUnsubscribe: true
-            )
-            apply(errors: errors)
-            return
-        }
-
-        var resolvedMunicipalityIDs = Set<String>()
-        var lookupErrors: [SubscriptionError] = []
-
-        for coordinate in coordinates {
-            do {
-                NSLog(
-                    "Subscription lookup started: lat=%.6f lon=%.6f",
-                    coordinate.latitude,
-                    coordinate.longitude
-                )
-                let municipalityID = try await fetchMunicipalityID(for: coordinate)
-                resolvedMunicipalityIDs.insert(municipalityID)
-                NSLog(
-                    "Subscription lookup resolved: lat=%.6f lon=%.6f municipalityId=%@",
-                    coordinate.latitude,
-                    coordinate.longitude,
-                    municipalityID
-                )
-            } catch is CancellationError {
-                NSLog("GeoSphere subscription lookup cancelled")
-                return
-            } catch let error as SubscriptionError {
-                lookupErrors.append(error)
-                NSLog(
-                    "Subscription lookup failed: lat=%.6f lon=%.6f error=%@",
-                    coordinate.latitude,
-                    coordinate.longitude,
-                    error.localizedDescription
-                )
-            } catch {
-                lookupErrors.append(.network(message: error.localizedDescription))
-                NSLog(
-                    "Subscription lookup failed: lat=%.6f lon=%.6f error=%@",
-                    coordinate.latitude,
-                    coordinate.longitude,
-                    error.localizedDescription
-                )
-            }
-        }
-
-        NSLog(
-            "Subscription lookup summary: resolvedMunicipalityIDs=%@ lookupErrors=%ld allowUnsubscribe=%@",
-            formatMunicipalityIDs(resolvedMunicipalityIDs),
-            lookupErrors.count,
-            lookupErrors.isEmpty ? "true" : "false"
-        )
-
-        // Keine destruktiven Unsubscribes durchführen, wenn kein einziger Standort erfolgreich aufgelöst wurde.
-        if resolvedMunicipalityIDs.isEmpty {
-            apply(errors: lookupErrors.isEmpty ? [.invalidResponse] : lookupErrors)
-            return
-        }
-
-        // Bei teilweisem Lookup-Fehler nur additiv synchronisieren, um versehentliche Topic-Verluste zu vermeiden.
-        let syncErrors = await synchronizeTopics(
-            desiredMunicipalityIDs: resolvedMunicipalityIDs,
-            previousLanguageCode: previousLanguageCode,
-            desiredLanguageCode: desiredLanguageCode,
-            hasStoredLanguageCode: storedLanguageCode != nil,
-            allowUnsubscribe: lookupErrors.isEmpty
-        )
-
-        apply(errors: lookupErrors + syncErrors)
-    }
-
-    /// Entfernt alle aktuellen Topic-Abonnements.
-    func unsubscribeAll() async {
-        lastError = nil
-        let currentLanguageCode = storedSubscribedLanguageCode() ?? defaultLanguageCode
-        let errors = await synchronizeTopics(
-            desiredMunicipalityIDs: [],
-            previousLanguageCode: currentLanguageCode,
-            desiredLanguageCode: currentLanguageCode,
-            hasStoredLanguageCode: true,
-            allowUnsubscribe: true
-        )
-        apply(errors: errors)
-    }
-
-    private func apply(errors: [SubscriptionError]) {
-        if errors.isEmpty {
-            lastError = nil
-            return
-        }
-
-        if errors.count == 1 {
-            lastError = errors[0]
-            return
-        }
-
-        lastError = .partialSync(
-            message: "Topic-Synchronisierung mit Teilfehlern abgeschlossen.",
-            failures: errors.count
-        )
-    }
-
-    private func synchronizeTopics(
-        desiredMunicipalityIDs: Set<String>,
-        previousLanguageCode: String,
-        desiredLanguageCode: String,
-        hasStoredLanguageCode: Bool,
-        allowUnsubscribe: Bool
-    ) async -> [SubscriptionError] {
-        var errors: [SubscriptionError] = []
-        var workingSet = subscribedMunicipalityIDs
-        let languageChanged = previousLanguageCode != desiredLanguageCode
-        let requiresTopicMigration = !hasStoredLanguageCode
-        let shouldResubscribeAll = languageChanged || requiresTopicMigration
-
-        let toSubscribe = shouldResubscribeAll ? desiredMunicipalityIDs : desiredMunicipalityIDs.subtracting(workingSet)
-        let toUnsubscribe = allowUnsubscribe
-            ? (shouldResubscribeAll ? workingSet : workingSet.subtracting(desiredMunicipalityIDs))
-            : Set<String>()
-        let shouldCleanupLegacyTopics = allowUnsubscribe && previousLanguageCode == desiredLanguageCode && !hasStoredLanguageCode
-        var successfulTargetSubscriptions = Set<String>()
-
-        NSLog(
-            "Subscription topic diff: desired=%@ currentLocal=%@ previousLanguage=%@ desiredLanguage=%@ languageChanged=%@ requiresMigration=%@ allowUnsubscribe=%@ toSubscribe=%@ toUnsubscribe=%@ cleanupLegacy=%@",
-            formatMunicipalityIDs(desiredMunicipalityIDs),
-            formatMunicipalityIDs(workingSet),
-            previousLanguageCode,
-            desiredLanguageCode,
-            languageChanged ? "true" : "false",
-            requiresTopicMigration ? "true" : "false",
-            allowUnsubscribe ? "true" : "false",
-            formatMunicipalityIDs(toSubscribe),
-            formatMunicipalityIDs(toUnsubscribe),
-            shouldCleanupLegacyTopics ? "true" : "false"
-        )
-
-        if !toSubscribe.isEmpty || !toUnsubscribe.isEmpty || shouldCleanupLegacyTopics {
-            do {
-                try await FirebaseRegistrationManager.shared.registerForPushNotificationsIfNeeded()
-                print("Firebase registration successful.")
-            } catch {
-                print("Firebase registration failed: \(error.localizedDescription)")
-                errors.append(.firebaseRegistration(message: error.localizedDescription))
-                return errors
-            }
-        }
-
-        for municipalityID in toSubscribe.sorted() {
-            do {
-                try await subscribe(
-                    toMunicipalityID: municipalityID,
-                    languageCode: desiredLanguageCode
-                )
-                workingSet.insert(municipalityID)
-                successfulTargetSubscriptions.insert(municipalityID)
-                NSLog(
-                    "Subscribed municipalityId: %@ topic=%@",
-                    municipalityID,
-                    topicName(for: municipalityID, languageCode: desiredLanguageCode)
-                )
-            } catch let error as SubscriptionError {
-                NSLog(
-                    "Subscribe failed municipalityId=%@ topic=%@ error=%@",
-                    municipalityID,
-                    topicName(for: municipalityID, languageCode: desiredLanguageCode),
-                    error.localizedDescription
-                )
-                errors.append(error)
-            } catch {
-                NSLog(
-                    "Subscribe failed municipalityId=%@ topic=%@ error=%@",
-                    municipalityID,
-                    topicName(for: municipalityID, languageCode: desiredLanguageCode),
-                    error.localizedDescription
-                )
-                errors.append(.firebase(message: error.localizedDescription))
-            }
-        }
-
-        for municipalityID in toUnsubscribe.sorted() {
-            let shouldUnsubscribe: Bool
-            if !shouldResubscribeAll {
-                shouldUnsubscribe = true
-            } else {
-                shouldUnsubscribe = !desiredMunicipalityIDs.contains(municipalityID) || successfulTargetSubscriptions.contains(municipalityID)
-            }
-
-            if !shouldUnsubscribe {
-                continue
-            }
-
-            do {
-                try await unsubscribe(
-                    fromMunicipalityID: municipalityID,
-                    languageCode: previousLanguageCode
-                )
-                if !desiredMunicipalityIDs.contains(municipalityID) {
-                    workingSet.remove(municipalityID)
-                }
-                NSLog(
-                    "Unsubscribed municipalityId: %@ topic=%@",
-                    municipalityID,
-                    topicName(for: municipalityID, languageCode: previousLanguageCode)
-                )
-            } catch let error as SubscriptionError {
-                NSLog(
-                    "Unsubscribe failed municipalityId=%@ topic=%@ error=%@",
-                    municipalityID,
-                    topicName(for: municipalityID, languageCode: previousLanguageCode),
-                    error.localizedDescription
-                )
-                errors.append(error)
-            } catch {
-                NSLog(
-                    "Unsubscribe failed municipalityId=%@ topic=%@ error=%@",
-                    municipalityID,
-                    topicName(for: municipalityID, languageCode: previousLanguageCode),
-                    error.localizedDescription
-                )
-                errors.append(.firebase(message: error.localizedDescription))
-            }
-        }
-
-        if shouldCleanupLegacyTopics {
-            for municipalityID in workingSet.sorted() {
-                do {
-                    try await unsubscribeFromLegacyTopic(municipalityID: municipalityID)
-                    NSLog(
-                        "Unsubscribed legacy municipalityId: %@ topic=%@",
-                        municipalityID,
-                        legacyTopicName(for: municipalityID)
-                    )
-                } catch let error as SubscriptionError {
-                    NSLog(
-                        "Legacy unsubscribe failed municipalityId=%@ topic=%@ error=%@",
-                        municipalityID,
-                        legacyTopicName(for: municipalityID),
-                        error.localizedDescription
-                    )
-                    errors.append(error)
-                } catch {
-                    NSLog(
-                        "Legacy unsubscribe failed municipalityId=%@ topic=%@ error=%@",
-                        municipalityID,
-                        legacyTopicName(for: municipalityID),
-                        error.localizedDescription
-                    )
-                    errors.append(.firebase(message: error.localizedDescription))
-                }
-            }
-        }
-
-        subscribedMunicipalityIDs = workingSet
-        persistSubscribedMunicipalityIDs()
-        persistSubscribedLanguageCode(desiredLanguageCode)
-
-        NSLog(
-            "Subscription sync finished: persistedMunicipalityIDs=%@ persistedLanguage=%@ errors=%ld",
-            formatMunicipalityIDs(workingSet),
-            desiredLanguageCode,
-            errors.count
-        )
-
-        if workingSet.isEmpty {
-            do {
-                try await FirebaseRegistrationManager.shared.deregisterFromFirebase()
-                print("Firebase deregistration successful.")
-            } catch {
-                print("Firebase deregistration failed: \(error.localizedDescription)")
-                // Ignore deregistration cleanup failures to avoid noisy UI errors.
-            }
-        }
-
-        return errors
-    }
-
-    private func normalizeLanguageCode(_ rawValue: String) -> String {
-        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return normalized.isEmpty ? defaultLanguageCode : normalized
-    }
-
-    private func storedSubscribedLanguageCode() -> String? {
-        guard let rawValue = userDefaults.string(forKey: languageDefaultsKey) else {
-            return nil
-        }
-
-        let normalized = normalizeLanguageCode(rawValue)
-        return normalized.isEmpty ? nil : normalized
-    }
-
-    private func fetchMunicipalityID(for coordinate: CLLocationCoordinate2D) async throws -> String {
-        let url: URL
-        if let customURL = customGeoSphereURL {
-            guard let parsedURL = URL(string: customURL) else {
-                throw SubscriptionError.invalidResponse
-            }
-            url = parsedURL
-        } else {
-            var components = URLComponents(string: geosphereBaseURL)
-            components?.queryItems = [
-                URLQueryItem(name: "lat", value: String(format: "%.6f", coordinate.latitude)),
-                URLQueryItem(name: "lon", value: String(format: "%.6f", coordinate.longitude))
-            ]
-
-            guard let parsedURL = components?.url else {
-                throw SubscriptionError.invalidResponse
-            }
-            url = parsedURL
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = networkTimeout
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-
-        NSLog("GeoSphere subscription request URL: %@", url.absoluteString)
-        let data: Data
-        let response: URLResponse
-
-        do {
-            (data, response) = try await urlSession.data(for: request)
-        } catch let error as URLError where error.code == .cancelled {
-            throw CancellationError()
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            NSLog("GeoSphere subscription transport error for %@: %@", url.absoluteString, error.localizedDescription)
-            throw SubscriptionError.network(message: error.localizedDescription)
-        }
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw SubscriptionError.invalidResponse
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            let bodyPreview = String(data: data.prefix(600), encoding: .utf8) ?? "<non-utf8 body>"
-            NSLog("GeoSphere subscription HTTP failure: %ld for %@", httpResponse.statusCode, url.absoluteString)
-            NSLog("GeoSphere subscription HTTP body preview: %@", bodyPreview)
-            throw SubscriptionError.network(message: "GeoSphere HTTP \(httpResponse.statusCode)")
-        }
-
-        let decoded: GeoSphereLookupResponse
-        do {
-            decoded = try JSONDecoder().decode(GeoSphereLookupResponse.self, from: data)
-        } catch {
-            debugGeoSphereDecodingFailure(error: error, data: data, url: url, response: httpResponse)
-            throw SubscriptionError.invalidResponse
-        }
-
-        if decoded.type.lowercased() == "error" {
-            throw SubscriptionError.municipalityNotFound(
-                message: decoded.msg ?? "Could not find municipal for coords."
-            )
-        }
-
-        guard let municipalityID = decoded.properties?.location?.properties?.gemeindenr.value,
-              !municipalityID.isEmpty else {
-            throw SubscriptionError.invalidResponse
-        }
-
-        return municipalityID
-    }
-
-    private func debugGeoSphereDecodingFailure(
-        error: Error,
-        data: Data,
-        url: URL,
-        response: HTTPURLResponse
-    ) {
-        NSLog("GeoSphere decode failed for URL: %@", url.absoluteString)
-        NSLog("GeoSphere HTTP status: %ld", response.statusCode)
-        NSLog("GeoSphere decoding error: %@", String(describing: error))
-
-        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            NSLog("GeoSphere top-level keys: %@", object.keys.sorted().joined(separator: ", "))
-
-            if let firstKey = object.keys.sorted().first,
-               let nestedObject = object[firstKey] as? [String: Any] {
-                NSLog(
-                    "GeoSphere nested keys for %@: %@",
-                    firstKey,
-                    nestedObject.keys.sorted().joined(separator: ", ")
-                )
-            }
-        }
-
-        let bodyPreview = String(data: data.prefix(1200), encoding: .utf8) ?? "<non-utf8 body>"
-        NSLog("GeoSphere body preview: %@", bodyPreview)
-    }
-
-    private func subscribe(toMunicipalityID municipalityID: String, languageCode: String) async throws {
-        let topic = topicName(for: municipalityID, languageCode: languageCode)
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            Messaging.messaging().subscribe(toTopic: topic) { error in
-                if let error {
-                    continuation.resume(throwing: SubscriptionError.firebase(
-                        message: "FCM subscribe failed for \(topic): \(error.localizedDescription)"
-                    ))
-                } else {
-                    continuation.resume(returning: ())
-                }
-            }
-        }
-    }
-
-    private func unsubscribe(fromMunicipalityID municipalityID: String, languageCode: String) async throws {
-        let topic = topicName(for: municipalityID, languageCode: languageCode)
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            Messaging.messaging().unsubscribe(fromTopic: topic) { error in
-                if let error {
-                    continuation.resume(throwing: SubscriptionError.firebase(
-                        message: "FCM unsubscribe failed for \(topic): \(error.localizedDescription)"
-                    ))
-                } else {
-                    continuation.resume(returning: ())
-                }
-            }
-        }
-    }
-
-    private func unsubscribeFromLegacyTopic(municipalityID: String) async throws {
-        let topic = legacyTopicName(for: municipalityID)
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            Messaging.messaging().unsubscribe(fromTopic: topic) { error in
-                if let error {
-                    continuation.resume(throwing: SubscriptionError.firebase(
-                        message: "FCM legacy unsubscribe failed for \(topic): \(error.localizedDescription)"
-                    ))
-                } else {
-                    continuation.resume(returning: ())
-                }
-            }
-        }
-    }
-
-    private func topicName(for municipalityID: String, languageCode: String) -> String {
-        "warngebiet_\(municipalityID)_\(normalizeLanguageCode(languageCode))"
-    }
-
-    private func legacyTopicName(for municipalityID: String) -> String {
-        "warngebiet_\(municipalityID)"
-    }
-
-    private func formatMunicipalityIDs(_ municipalityIDs: Set<String>) -> String {
-        let formatted = municipalityIDs.sorted().joined(separator: ",")
-        return formatted.isEmpty ? "-" : formatted
-    }
-
-    private func persistSubscribedMunicipalityIDs() {
-        userDefaults.set(subscribedMunicipalityIDs.sorted(), forKey: userDefaultsKey)
-    }
-
-    private func persistSubscribedLanguageCode(_ languageCode: String) {
-        userDefaults.set(normalizeLanguageCode(languageCode), forKey: languageDefaultsKey)
-    }
-}
-
-enum SubscriptionError: Error, LocalizedError {
-    case invalidResponse
-    case network(message: String)
-    case municipalityNotFound(message: String)
-    case firebase(message: String)
-    case firebaseRegistration(message: String)
-    case partialSync(message: String, failures: Int)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidResponse:
-            return "Ungültige Antwortstruktur von GeoSphere."
-        case .network(let message):
-            return "Netzwerkfehler: \(message)"
-        case .municipalityNotFound(let message):
-            return "Gemeinde konnte nicht ermittelt werden: \(message)"
-        case .firebase(let message):
-            return "Firebase Messaging Fehler: \(message)"
-        case .firebaseRegistration(let message):
-            return "Firebase Registrierung Fehler: \(message)"
-        case .partialSync(let message, let failures):
-            return "\(message) Fehlgeschlagene Operationen: \(failures)."
-        }
-    }
-}
-
-private struct GeoSphereLookupResponse: Decodable {
-    let type: String
-    let msg: String?
-    let properties: GeoSphereLookupProperties?
-}
-
-private struct GeoSphereLookupProperties: Decodable {
-    let location: GeoSphereLocation?
-}
-
-private struct GeoSphereLocation: Decodable {
-    let properties: GeoSphereMunicipality?
-}
-
-private struct GeoSphereMunicipality: Decodable {
-    let gemeindenr: MunicipalityIdentifier
-}
-
-private struct MunicipalityIdentifier: Decodable {
-    let value: String
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-
-        if let intValue = try? container.decode(Int.self) {
-            value = String(intValue)
-            return
-        }
-
-        if let stringValue = try? container.decode(String.self) {
-            value = stringValue
-            return
-        }
-
-        throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported gemeindenr format")
+        worker = nil
     }
 }

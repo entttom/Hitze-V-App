@@ -3,3 +3,27 @@ hitze-v-firebase-adminsdk-fbsvc-859848d271.json
 **/google-services.json
 .DS_Store
 **/.DS_Store
+
+# Secrets (any rotated service-account key, env files)
+*firebase-adminsdk*.json
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output
+node_modules/
+backend/dist/
+*.aab
+*.apk
+Android/app/release/
+Android/.kotlin/
+Android/.idea/
+iOS/**/build_output.log
+xcuserdata/
+
+# Local tooling
+.claude/
+Android/Upload - App ausführbar.app/
+
+# Python caches
+__pycache__/

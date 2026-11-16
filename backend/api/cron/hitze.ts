@@ -1,1566 +1,35 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { cert, getApps, initializeApp } from "firebase-admin/app";
-import { getMessaging, type Messaging } from "firebase-admin/messaging";
-import { createClient, type RedisClientType } from "redis";
-import * as XLSX from "xlsx";
-import { isEnvFlagEnabled } from "./env";
-import { sendPushoverReport } from "./pushover";
+import type { Message, TopicMessage } from "firebase-admin/messaging";
+import { decideAll, expiredStateKeys, toPushDay, type DayState, type GkzDecision } from "./decision";
+import { loadCronConfig, type CronConfig, type LegacyLanguageTopicsMode } from "./env";
+import { AppError, errorMessage, toAppError } from "./errors";
+import { fetchGeoSphereFeed, groupByGkzDay, normalizeFeatures, type FeedResult } from "./feed";
+import { firebaseErrorCode, getFirebaseMessaging, type MessagingLike } from "./firebase";
+import {
+  buildLegacyMessage,
+  buildLegacyPayload,
+  buildV2Message,
+  buildV2Payload,
+  latestDayEndMs,
+  legacyTopic,
+  toTokenMessage,
+  v2Topic,
+  type PushContent,
+} from "./messages";
+import { listMunicipalities, municipalityName, type MunicipalityOption } from "./municipalities";
+import { pushoverReporter, type CronReporter } from "./pushover";
 import {
   DEFAULT_PUSH_LANGUAGE,
   SUPPORTED_PUSH_LANGUAGES,
   listSupportedPushLanguages,
   normalizeSupportedPushLanguage,
   parseSupportedPushLanguage,
-  pushLocalizationFor,
   type SupportedPushLanguage,
 } from "./pushLocalization";
-
-const GEOSPHERE_WARNSTATUS_URL = "https://warnungen.zamg.at/wsapp/api/getWarnstatus";
-const REDIS_SIGNATURE_KEY = "hitze:v1:signatures";
-const REDIS_SEND_META_KEY = "hitze:v1:send_meta";
-const REDIS_CRON_LOCK_KEY = "hitze:v1:cron_lock";
-const SEND_META_RETENTION_DAYS = 7;
-const WARNING_TYPE_HEAT = 6;
-const MUNICIPALITY_LIST_FILE = "gemliste_knz.xls";
-const DEFAULT_MIN_WARNING_LEVEL = 2;
-const GEO_FETCH_TIMEOUT_MS = 10_000;
-const GEO_FETCH_RETRIES = 2;
-const DEFAULT_FCM_SEND_CONCURRENCY = 50;
-const DEFAULT_CRON_LOCK_TTL_SECONDS = 30 * 60;
-const PUSH_QUIET_HOURS_START = 20;
-const PUSH_QUIET_HOURS_END = 6;
-
-let messagingClient: Messaging | null = null;
-let redisClient: RedisClientType | null = null;
-let municipalityNameById: Map<string, string> | null = null;
-let testMunicipalityOptions: TestMunicipalityOption[] | null = null;
-
-type WarningKind = "heat";
-
-interface NormalizedWarning {
-  id: string;
-  kind: WarningKind;
-  level: number;
-  municipalities: string[];
-  start: string;
-  end: string;
-  geometry: unknown;
-}
-
-interface MunicipalityAggregate {
-  municipalityId: string;
-  kind: WarningKind;
-  maxLevel: number;
-  warningIds: Set<string>;
-  starts: Set<string>;
-  ends: Set<string>;
-}
-
-interface HandlerSuccessResponse {
-  requestId: string;
-  processedWarnings: number;
-  affectedMunicipalities: number;
-  affectedLanguageTargets: number;
-  fcmSendConcurrency: number;
-  cronLockTtlSeconds: number;
-  pushQuietHoursActive: boolean;
-  pushQuietHoursWindow: string;
-  sent: number;
-  skippedUnchanged: number;
-  skippedRateLimited: number;
-  skippedQuietHours: number;
-  cleared: number;
-  failed: number;
-  durationMs: number;
-  failedMunicipalities: string[];
-  failedTargets: string[];
-}
-
-interface AggregateSendMetadata {
-  dayKey: string;
-  start: string;
-  end: string;
-}
-
-interface TimeWindow {
-  start: string;
-  end: string;
-}
-
-interface SendCandidate {
-  aggregate: MunicipalityAggregate;
-  languageCode: SupportedPushLanguage;
-  stateKey: string;
-  signature: string;
-  previousTimeWindow: TimeWindow | null;
-  timeWindowChanged: boolean;
-}
-
-class AppError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly code: string,
-    message: string
-  ) {
-    super(message);
-    this.name = "AppError";
-  }
-}
-
-class RedisUnavailableError extends AppError {
-  constructor(message: string) {
-    super(503, "REDIS_UNAVAILABLE", message);
-    this.name = "RedisUnavailableError";
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function asString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function asNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  return null;
-}
-
-function normalizeMunicipalityId(value: string): string {
-  return value.replace(/\s+/g, "");
-}
-
-function getWarningLevel(properties: Record<string, unknown>): number | null {
-  const directLevel =
-    asNumber(properties.wlevel) ??
-    asNumber(properties.warning_level) ??
-    asNumber(properties.warnstufeid);
-
-  if (directLevel !== null) {
-    return directLevel;
-  }
-
-  const rawInfo = isRecord(properties.rawinfo)
-    ? properties.rawinfo
-    : isRecord(properties.rawfinfo)
-      ? properties.rawfinfo
-      : null;
-
-  if (!rawInfo) {
-    return null;
-  }
-
-  return (
-    asNumber(rawInfo.wlevel) ??
-    asNumber(rawInfo.warning_level) ??
-    asNumber(rawInfo.warnstufeid)
-  );
-}
-
-function normalizeWarningLevel(kind: WarningKind, geoSphereLevel: number): number {
-  if (kind !== "heat") {
-    return geoSphereLevel;
-  }
-
-  return geoSphereLevel > 0 ? geoSphereLevel + 1 : 0;
-}
-
-function getRawInfo(properties: Record<string, unknown>): Record<string, unknown> | null {
-  return isRecord(properties.rawinfo)
-    ? properties.rawinfo
-    : isRecord(properties.rawfinfo)
-      ? properties.rawfinfo
-      : null;
-}
-
-function parseTimestampToEpochMs(value: unknown): number | null {
-  const numeric = asNumber(value);
-  if (numeric !== null) {
-    // GeoSphere unix values are usually seconds; larger values are assumed to be milliseconds.
-    return numeric > 100_000_000_000 ? Math.trunc(numeric) : Math.trunc(numeric * 1000);
-  }
-
-  const str = asString(value);
-  if (!str) {
-    return null;
-  }
-
-  if (/^\d+(\.\d+)?$/.test(str)) {
-    const asNumeric = Number(str);
-    if (Number.isFinite(asNumeric)) {
-      return asNumeric > 100_000_000_000 ? Math.trunc(asNumeric) : Math.trunc(asNumeric * 1000);
-    }
-    return null;
-  }
-
-  const parsed = Date.parse(str);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-function toIsoUtc(epochMs: number | null): string {
-  if (epochMs === null) {
-    return "";
-  }
-
-  return new Date(epochMs).toISOString();
-}
-
-function getWarningTimeWindow(properties: Record<string, unknown>): { start: string; end: string; endMs: number | null } {
-  const rawInfo = getRawInfo(properties);
-
-  const startMs =
-    parseTimestampToEpochMs(properties.begin) ??
-    parseTimestampToEpochMs(properties.start) ??
-    parseTimestampToEpochMs(rawInfo?.begin) ??
-    parseTimestampToEpochMs(rawInfo?.start);
-
-  const endMs =
-    parseTimestampToEpochMs(properties.end) ??
-    parseTimestampToEpochMs(rawInfo?.end);
-
-  return {
-    start: toIsoUtc(startMs),
-    end: toIsoUtc(endMs),
-    endMs,
-  };
-}
-
-function mapWarningTypeToKind(value: unknown): WarningKind | null {
-  return asNumber(value) === WARNING_TYPE_HEAT ? "heat" : null;
-}
-
-function getWarningKind(properties: Record<string, unknown>): WarningKind | null {
-  const directType =
-    properties.wtype ??
-    properties.warn_type ??
-    properties.warning_type ??
-    properties.warntypid;
-
-  const directKind = mapWarningTypeToKind(directType);
-  if (directKind) {
-    return directKind;
-  }
-
-  const textualType = asString(directType)?.toLowerCase();
-  if (textualType && (textualType.includes("hitze") || textualType.includes("heat"))) {
-    return "heat";
-  }
-
-  const rawInfo = getRawInfo(properties);
-
-  if (!rawInfo) {
-    return null;
-  }
-
-  const nestedType = rawInfo.wtype ?? rawInfo.warn_type ?? rawInfo.warning_type ?? rawInfo.warntypid;
-  return mapWarningTypeToKind(nestedType);
-}
-
-function getMunicipalityIds(properties: Record<string, unknown>): string[] {
-  const value = properties.gemeinden ?? properties.municipalities;
-
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const ids = new Set<string>();
-
-  for (const entry of value) {
-    const numeric = asNumber(entry);
-    const parsed = asString(entry) ?? (numeric !== null ? String(numeric) : null);
-
-    if (!parsed) {
-      continue;
-    }
-
-    const normalized = normalizeMunicipalityId(parsed);
-    if (normalized.length > 0) {
-      ids.add(normalized);
-    }
-  }
-
-  return Array.from(ids).sort();
-}
-
-function getWarningId(properties: Record<string, unknown>, fallbackId: string): string {
-  const candidates = [properties.warnid, properties.warning_id, properties.id];
-
-  for (const candidate of candidates) {
-    const str = asString(candidate);
-    if (str) {
-      return str;
-    }
-
-    const numeric = asNumber(candidate);
-    if (numeric !== null) {
-      return String(numeric);
-    }
-  }
-
-  return fallbackId;
-}
-
-function normalizeWarning(
-  rawFeature: unknown,
-  index: number,
-  minWarningLevel: number
-): NormalizedWarning | null {
-  if (!isRecord(rawFeature)) {
-    return null;
-  }
-
-  const properties = isRecord(rawFeature.properties) ? rawFeature.properties : null;
-  if (!properties) {
-    return null;
-  }
-
-  const kind = getWarningKind(properties);
-  if (!kind) {
-    return null;
-  }
-
-  const geoSphereLevel = getWarningLevel(properties);
-  if (geoSphereLevel === null) {
-    return null;
-  }
-
-  const level = normalizeWarningLevel(kind, geoSphereLevel);
-  if (level < minWarningLevel) {
-    return null;
-  }
-
-  const municipalities = getMunicipalityIds(properties);
-  if (municipalities.length === 0) {
-    return null;
-  }
-
-  const { start, end, endMs } = getWarningTimeWindow(properties);
-  if (endMs !== null && endMs <= Date.now()) {
-    return null;
-  }
-
-  return {
-    id: getWarningId(properties, `fallback-${index}`),
-    kind,
-    level,
-    municipalities,
-    start,
-    end,
-    geometry: rawFeature.geometry,
-  };
-}
-
-function aggregateWarnings(warnings: NormalizedWarning[]): Map<string, MunicipalityAggregate> {
-  const aggregates = new Map<string, MunicipalityAggregate>();
-
-  for (const warning of warnings) {
-    for (const municipalityId of warning.municipalities) {
-      const aggregateKey = `${warning.kind}:${municipalityId}`;
-      const existing = aggregates.get(aggregateKey);
-
-      if (!existing) {
-        const aggregate: MunicipalityAggregate = {
-          municipalityId,
-          kind: warning.kind,
-          maxLevel: warning.level,
-          warningIds: new Set([warning.id]),
-          starts: warning.start ? new Set([warning.start]) : new Set(),
-          ends: warning.end ? new Set([warning.end]) : new Set(),
-        };
-        aggregates.set(aggregateKey, aggregate);
-        continue;
-      }
-
-      existing.maxLevel = Math.max(existing.maxLevel, warning.level);
-      existing.warningIds.add(warning.id);
-
-      if (warning.start) {
-        existing.starts.add(warning.start);
-      }
-
-      if (warning.end) {
-        existing.ends.add(warning.end);
-      }
-    }
-  }
-
-  return aggregates;
-}
-
-function buildMunicipalitySignature(aggregate: MunicipalityAggregate): string {
-  const warningIds = Array.from(aggregate.warningIds).sort();
-  const starts = Array.from(aggregate.starts).sort();
-  const ends = Array.from(aggregate.ends).sort();
-
-  const payload = JSON.stringify({
-    municipalityId: aggregate.municipalityId,
-    kind: aggregate.kind,
-    maxLevel: aggregate.maxLevel,
-    warningIds,
-    starts,
-    ends,
-  });
-
-  return createHash("sha256").update(payload).digest("hex");
-}
-
-function aggregateTimeWindow(aggregate: MunicipalityAggregate): TimeWindow {
-  const starts = Array.from(aggregate.starts).filter((value) => value.length > 0).sort();
-  const ends = Array.from(aggregate.ends).filter((value) => value.length > 0).sort();
-
-  return {
-    start: starts[0] ?? "",
-    end: ends.length > 0 ? ends[ends.length - 1] : "",
-  };
-}
-
-function formatPushTime(
-  isoValue: string,
-  languageCode: SupportedPushLanguage
-): string {
-  if (!isoValue) {
-    return "";
-  }
-
-  const parsed = Date.parse(isoValue);
-  if (Number.isNaN(parsed)) {
-    return "";
-  }
-
-  const localization = pushLocalizationFor(languageCode);
-  return new Intl.DateTimeFormat(localization.localeTag, {
-    timeZone: "Europe/Vienna",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(parsed));
-}
-
-function formatPushDate(
-  isoValue: string,
-  languageCode: SupportedPushLanguage
-): string {
-  if (!isoValue) {
-    return "";
-  }
-
-  const parsed = Date.parse(isoValue);
-  if (Number.isNaN(parsed)) {
-    return "";
-  }
-
-  const localization = pushLocalizationFor(languageCode);
-  return new Intl.DateTimeFormat(localization.localeTag, {
-    timeZone: "Europe/Vienna",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(new Date(parsed));
-}
-
-function formatPushClockTime(
-  isoValue: string,
-  languageCode: SupportedPushLanguage
-): string {
-  if (!isoValue) {
-    return "";
-  }
-
-  const parsed = Date.parse(isoValue);
-  if (Number.isNaN(parsed)) {
-    return "";
-  }
-
-  const localization = pushLocalizationFor(languageCode);
-  return new Intl.DateTimeFormat(localization.localeTag, {
-    timeZone: "Europe/Vienna",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(parsed));
-}
-
-function viennaDateTimeParts(
-  isoValue: string
-): { dayKey: string; hour: number; minute: number } | null {
-  if (!isoValue) {
-    return null;
-  }
-
-  const parsed = Date.parse(isoValue);
-  if (Number.isNaN(parsed)) {
-    return null;
-  }
-
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Vienna",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(parsed));
-
-  const partValue = (type: string): string | undefined =>
-    parts.find((part) => part.type === type)?.value;
-
-  const year = partValue("year");
-  const month = partValue("month");
-  const day = partValue("day");
-  const hour = Number(partValue("hour"));
-  const minute = Number(partValue("minute"));
-
-  if (!year || !month || !day || !Number.isInteger(hour) || !Number.isInteger(minute)) {
-    return null;
-  }
-
-  return {
-    dayKey: `${year}-${month}-${day}`,
-    hour,
-    minute,
-  };
-}
-
-function isAllDayTimeWindow(timeWindow: TimeWindow): boolean {
-  const start = viennaDateTimeParts(timeWindow.start);
-  const end = viennaDateTimeParts(timeWindow.end);
-
-  if (!start || !end) {
-    return false;
-  }
-
-  return start.hour === 0 && start.minute === 0 && end.hour === 23 && end.minute >= 59;
-}
-
-function dayKeyForIsoValue(isoValue: string): string {
-  if (!isoValue) {
-    return "";
-  }
-
-  const parsed = Date.parse(isoValue);
-  if (Number.isNaN(parsed)) {
-    return "";
-  }
-
-  return currentDayKeyVienna(parsed);
-}
-
-function buildTimeWindowText(
-  timeWindow: TimeWindow,
-  languageCode: SupportedPushLanguage
-): string {
-  const localization = pushLocalizationFor(languageCode);
-  const startText = formatPushTime(timeWindow.start, languageCode);
-  const endText = formatPushTime(timeWindow.end, languageCode);
-  const startClockText = formatPushClockTime(timeWindow.start, languageCode);
-  const endClockText = formatPushClockTime(timeWindow.end, languageCode);
-  const todayDayKey = currentDayKeyVienna();
-  const startDayKey = dayKeyForIsoValue(timeWindow.start);
-  const endDayKey = dayKeyForIsoValue(timeWindow.end);
-
-  if (startText && endText) {
-    if (isAllDayTimeWindow(timeWindow)) {
-      const startDateText = formatPushDate(timeWindow.start, languageCode);
-      const endDateText = formatPushDate(timeWindow.end, languageCode);
-
-      if (startDayKey === todayDayKey && endDayKey === todayDayKey) {
-        return localization.allDayLabel;
-      }
-
-      if (startDayKey === endDayKey && startDateText) {
-        return `${localization.allDayLabel}: ${startDateText}`;
-      }
-
-      if (startDateText && endDateText) {
-        return `${localization.allDayLabel}: ${startDateText} - ${endDateText}`;
-      }
-    }
-
-    if (
-      startClockText &&
-      endClockText &&
-      startDayKey === todayDayKey &&
-      endDayKey === todayDayKey
-    ) {
-      return localization.formatTodayRange(startClockText, endClockText);
-    }
-
-    return localization.formatValidRange(startText, endText);
-  }
-
-  if (startText) {
-    if (startClockText && startDayKey === todayDayKey) {
-      return localization.formatTodayFrom(startClockText);
-    }
-
-    return localization.formatFrom(startText);
-  }
-
-  if (endText) {
-    if (endClockText && endDayKey === todayDayKey) {
-      return localization.formatTodayUntil(endClockText);
-    }
-
-    return localization.formatUntil(endText);
-  }
-
-  return "";
-}
-
-function buildTimeWindowChangeText(
-  previousTimeWindow: TimeWindow | null,
-  currentTimeWindow: TimeWindow,
-  languageCode: SupportedPushLanguage
-): string {
-  const localization = pushLocalizationFor(languageCode);
-  const currentText = buildTimeWindowText(currentTimeWindow, languageCode);
-  if (!currentText) {
-    return "";
-  }
-
-  const previousText = previousTimeWindow
-    ? buildTimeWindowText(previousTimeWindow, languageCode)
-    : "";
-  if (previousText) {
-    return localization.formatTimeWindowChanged(previousText, currentText);
-  }
-
-  return localization.formatTimeWindowUpdated(currentText);
-}
-
-function municipalityListPaths(): string[] {
-  return [
-    path.resolve(process.cwd(), MUNICIPALITY_LIST_FILE),
-    path.resolve(__dirname, "..", MUNICIPALITY_LIST_FILE),
-    path.resolve(__dirname, "..", "..", MUNICIPALITY_LIST_FILE),
-    path.resolve(__dirname, "..", "..", "..", MUNICIPALITY_LIST_FILE),
-  ];
-}
-
-function municipalityListPath(): string {
-  for (const candidate of municipalityListPaths()) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return municipalityListPaths()[0];
-}
-
-function loadMunicipalityRows(): Array<{ municipalityId: string; name: string }> {
-  const filePath = municipalityListPath();
-
-  if (!existsSync(filePath)) {
-    console.warn(`municipality_list_not_found: ${filePath}`);
-    return [];
-  }
-
-  try {
-    const workbook = XLSX.readFile(filePath);
-    const firstSheet = workbook.Sheets[workbook.SheetNames[0] ?? ""];
-    const rows = XLSX.utils.sheet_to_json(firstSheet, {
-      header: 1,
-      raw: false,
-      defval: "",
-    }) as unknown[][];
-
-    return rows
-      .slice(1)
-      .map((row) => {
-        const idCandidate =
-          asString(row[0]) ?? (asNumber(row[0]) !== null ? String(asNumber(row[0])) : null);
-        const name = asString(row[1]);
-
-        if (!idCandidate || !name) {
-          return null;
-        }
-
-        const municipalityId = normalizeMunicipalityId(idCandidate);
-        if (!municipalityId) {
-          return null;
-        }
-
-        return {
-          municipalityId,
-          name,
-        };
-      })
-      .filter((row): row is { municipalityId: string; name: string } => row !== null);
-  } catch (error) {
-    console.warn("municipality_list_load_failed", {
-      filePath,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return [];
-  }
-}
-
-function loadMunicipalityNameMap(): Map<string, string> {
-  if (municipalityNameById) {
-    return municipalityNameById;
-  }
-
-  const map = new Map<string, string>();
-  for (const row of loadMunicipalityRows()) {
-    map.set(row.municipalityId, row.name);
-  }
-
-  municipalityNameById = map;
-  return map;
-}
-
-function municipalityDisplayName(
-  municipalityId: string,
-  languageCode: SupportedPushLanguage = DEFAULT_PUSH_LANGUAGE
-): string {
-  const name = loadMunicipalityNameMap().get(municipalityId);
-  if (name) {
-    return name;
-  }
-
-  const localization = pushLocalizationFor(languageCode);
-  return `${localization.municipalityLabel} ${municipalityId}`;
-}
-
-function getMinWarningLevel(): number {
-  const raw = process.env.HITZE_MIN_LEVEL;
-  if (!raw) {
-    return DEFAULT_MIN_WARNING_LEVEL;
-  }
-
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1 || value > 3) {
-    return DEFAULT_MIN_WARNING_LEVEL;
-  }
-
-  return value;
-}
-
-function getBoundedIntegerEnv(
-  name: string,
-  defaultValue: number,
-  min: number,
-  max: number
-): number {
-  const raw = process.env[name];
-  if (!raw) {
-    return defaultValue;
-  }
-
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < min || value > max) {
-    return defaultValue;
-  }
-
-  return value;
-}
-
-function getFcmSendConcurrency(): number {
-  return getBoundedIntegerEnv(
-    "HITZE_FCM_SEND_CONCURRENCY",
-    DEFAULT_FCM_SEND_CONCURRENCY,
-    1,
-    500
-  );
-}
-
-function getCronLockTtlSeconds(): number {
-  return getBoundedIntegerEnv(
-    "HITZE_CRON_LOCK_TTL_SECONDS",
-    DEFAULT_CRON_LOCK_TTL_SECONDS,
-    60,
-    60 * 60
-  );
-}
-
-function currentHourVienna(epochMs: number = Date.now()): number {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/Vienna",
-    hour: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(epochMs));
-
-  const hour = Number(parts.find((part) => part.type === "hour")?.value);
-  return Number.isInteger(hour) ? hour : new Date(epochMs).getUTCHours();
-}
-
-function isPushQuietHoursVienna(epochMs: number = Date.now()): boolean {
-  const hour = currentHourVienna(epochMs);
-  return hour >= PUSH_QUIET_HOURS_START || hour < PUSH_QUIET_HOURS_END;
-}
-
-function pushQuietHoursWindowLabel(): string {
-  return `${String(PUSH_QUIET_HOURS_START).padStart(2, "0")}:00-${String(PUSH_QUIET_HOURS_END).padStart(2, "0")}:00 Europe/Vienna`;
-}
-
-function useStaticGeoSphereResponse(): boolean {
-  return isEnvFlagEnabled(process.env.HITZE_USE_STATIC_GEOSPHERE_RESPONSE);
-}
-
-function getStaticGeoSphereUrl(): string | null {
-  return asString(process.env.HITZE_STATIC_GEOSPHERE_URL);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-async function allSettledWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  task: (item: T, index: number) => Promise<R>
-): Promise<Array<PromiseSettledResult<R>>> {
-  if (items.length === 0) {
-    return [];
-  }
-
-  const results = new Array<PromiseSettledResult<R>>(items.length);
-  const workerCount = Math.min(Math.max(1, concurrency), items.length);
-  let nextIndex = 0;
-
-  async function worker(): Promise<void> {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-
-      try {
-        results[index] = {
-          status: "fulfilled",
-          value: await task(items[index], index),
-        };
-      } catch (reason) {
-        results[index] = {
-          status: "rejected",
-          reason,
-        };
-      }
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: workerCount }, () => worker())
-  );
-
-  return results;
-}
-
-async function fetchJsonWithRetry(url: string, requestId: string): Promise<unknown> {
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt <= GEO_FETCH_RETRIES; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), GEO_FETCH_TIMEOUT_MS);
-
-    try {
-      const response = await fetch(url, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const body = await response.text();
-        throw new AppError(
-          502,
-          "GEOSPHERE_HTTP_ERROR",
-          `GeoSphere returned HTTP ${response.status}. Body: ${body.slice(0, 200)}`
-        );
-      }
-
-      return await response.json();
-    } catch (error) {
-      lastError = error;
-      const shouldRetry = attempt < GEO_FETCH_RETRIES;
-
-      if (!shouldRetry) {
-        break;
-      }
-
-      console.warn(`[${requestId}] geosphere_fetch_retry`, {
-        attempt,
-        error: error instanceof Error ? error.message : String(error),
-      });
-
-      await sleep(400 * (attempt + 1));
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  if (lastError instanceof AppError) {
-    throw lastError;
-  }
-
-  throw new AppError(
-    502,
-    "GEOSPHERE_FETCH_FAILED",
-    `GeoSphere fetch failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`
-  );
-}
-
-function extractGeoSphereFeatures(payload: unknown): unknown[] | null {
-  if (isRecord(payload) && Array.isArray(payload.features)) {
-    return payload.features;
-  }
-
-  if (isRecord(payload)) {
-    for (const nestedValue of Object.values(payload)) {
-      if (isRecord(nestedValue) && Array.isArray(nestedValue.features)) {
-        return nestedValue.features;
-      }
-
-      const wrappedValue = isRecord(nestedValue) ? nestedValue.value : null;
-      if (isRecord(wrappedValue) && Array.isArray(wrappedValue.features)) {
-        return wrappedValue.features;
-      }
-    }
-  }
-
-  return null;
-}
-
-async function fetchGeoSphereWarningsWithStats(
-  requestId: string,
-  minWarningLevel: number
-): Promise<{ warnings: NormalizedWarning[]; rawFeatureCount: number }> {
-  let payload: unknown;
-
-  if (useStaticGeoSphereResponse()) {
-    const staticUrl = getStaticGeoSphereUrl();
-    if (!staticUrl) {
-      throw new AppError(
-        500,
-        "CONFIG_ERROR",
-        "HITZE_STATIC_GEOSPHERE_URL must be set when HITZE_USE_STATIC_GEOSPHERE_RESPONSE is enabled."
-      );
-    }
-
-    payload = await fetchJsonWithRetry(staticUrl, requestId);
-  } else {
-    payload = await fetchJsonWithRetry(GEOSPHERE_WARNSTATUS_URL, requestId);
-  }
-
-  const features = extractGeoSphereFeatures(payload);
-
-  if (!features) {
-    throw new AppError(
-      502,
-      "GEOSPHERE_SCHEMA_INVALID",
-      "GeoSphere payload is missing a valid features array."
-    );
-  }
-
-  const result: NormalizedWarning[] = [];
-
-  features.forEach((feature, index) => {
-    const normalized = normalizeWarning(feature, index, minWarningLevel);
-    if (normalized) {
-      result.push(normalized);
-    }
-  });
-
-  return { warnings: result, rawFeatureCount: features.length };
-}
-
-async function fetchGeoSphereWarnings(
-  requestId: string,
-  minWarningLevel: number
-): Promise<NormalizedWarning[]> {
-  const { warnings } = await fetchGeoSphereWarningsWithStats(requestId, minWarningLevel);
-  return warnings;
-}
-
-interface FirebaseServiceAccount {
-  projectId: string;
-  clientEmail: string;
-  privateKey: string;
-}
-
-function getFirebaseServiceAccountFromEnv(): FirebaseServiceAccount {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
-  if (!raw) {
-    throw new AppError(500, "CONFIG_ERROR", "Missing FIREBASE_SERVICE_ACCOUNT environment variable.");
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new AppError(500, "CONFIG_ERROR", "FIREBASE_SERVICE_ACCOUNT is not valid JSON.");
-  }
-
-  if (!isRecord(parsed)) {
-    throw new AppError(500, "CONFIG_ERROR", "FIREBASE_SERVICE_ACCOUNT must decode into an object.");
-  }
-
-  const projectId = asString(parsed.project_id);
-  const clientEmail = asString(parsed.client_email);
-  const privateKey = asString(parsed.private_key)?.replace(/\\n/g, "\n");
-
-  if (!projectId || !clientEmail || !privateKey) {
-    throw new AppError(
-      500,
-      "CONFIG_ERROR",
-      "FIREBASE_SERVICE_ACCOUNT is missing required fields project_id/client_email/private_key."
-    );
-  }
-
-  return { projectId, clientEmail, privateKey };
-}
-
-function getFirebaseMessagingClient(): Messaging {
-  if (messagingClient) {
-    return messagingClient;
-  }
-
-  if (!getApps().length) {
-    const serviceAccount = getFirebaseServiceAccountFromEnv();
-
-    initializeApp({
-      credential: cert({
-        projectId: serviceAccount.projectId,
-        clientEmail: serviceAccount.clientEmail,
-        privateKey: serviceAccount.privateKey,
-      }),
-    });
-  }
-
-  messagingClient = getMessaging();
-  return messagingClient;
-}
-
-class RedisStateClient {
-  constructor(private readonly client: RedisClientType) {}
-
-  async acquireCronLock(token: string, ttlSeconds: number): Promise<boolean> {
-    try {
-      const result = await this.client.set(REDIS_CRON_LOCK_KEY, token, {
-        expiration: { type: "EX", value: ttlSeconds },
-        condition: "NX",
-      });
-
-      return result === "OK";
-    } catch (error) {
-      throw new RedisUnavailableError(
-        `Redis SET lock failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
-  async releaseCronLock(token: string): Promise<boolean> {
-    try {
-      const result = await this.client.eval(
-        `
-          if redis.call("GET", KEYS[1]) == ARGV[1] then
-            return redis.call("DEL", KEYS[1])
-          end
-          return 0
-        `,
-        {
-          keys: [REDIS_CRON_LOCK_KEY],
-          arguments: [token],
-        }
-      );
-
-      return result === 1;
-    } catch (error) {
-      throw new RedisUnavailableError(
-        `Redis lock release failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
-  async getSignatures(): Promise<Record<string, string>> {
-    try {
-      const result = await this.client.hGetAll(REDIS_SIGNATURE_KEY);
-      return result ?? {};
-    } catch (error) {
-      throw new RedisUnavailableError(
-        `Redis HGETALL failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
-  async setSignatures(entries: Record<string, string>): Promise<void> {
-    const pairs = Object.entries(entries);
-    if (pairs.length === 0) {
-      return;
-    }
-
-    try {
-      await this.client.hSet(REDIS_SIGNATURE_KEY, entries);
-    } catch (error) {
-      throw new RedisUnavailableError(
-        `Redis HSET failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
-  async getSendMetadata(): Promise<Record<string, AggregateSendMetadata>> {
-    try {
-      const result = await this.client.hGetAll(REDIS_SEND_META_KEY);
-      if (!result) {
-        return {};
-      }
-
-      const parsed: Record<string, AggregateSendMetadata> = {};
-      for (const [key, value] of Object.entries(result)) {
-        try {
-          const decoded = JSON.parse(value) as { dayKey?: unknown; start?: unknown };
-          const dayKey = asString(decoded.dayKey);
-          const start = asString(decoded.start) ?? "";
-          const end = asString((decoded as { end?: unknown }).end) ?? "";
-          if (!dayKey) {
-            continue;
-          }
-
-          parsed[key] = { dayKey, start, end };
-        } catch {
-          // Ignore malformed metadata entries and continue safely.
-        }
-      }
-
-      return parsed;
-    } catch (error) {
-      throw new RedisUnavailableError(
-        `Redis HGETALL failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
-  async setSendMetadata(entries: Record<string, AggregateSendMetadata>): Promise<void> {
-    const serializedEntries: Record<string, string> = {};
-    for (const [key, value] of Object.entries(entries)) {
-      serializedEntries[key] = JSON.stringify(value);
-    }
-
-    if (Object.keys(serializedEntries).length === 0) {
-      return;
-    }
-
-    try {
-      await this.client.hSet(REDIS_SEND_META_KEY, serializedEntries);
-    } catch (error) {
-      throw new RedisUnavailableError(
-        `Redis HSET failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
-  async removeSignatures(municipalityIds: string[]): Promise<number> {
-    if (municipalityIds.length === 0) {
-      return 0;
-    }
-
-    try {
-      return await this.client.hDel(REDIS_SIGNATURE_KEY, municipalityIds);
-    } catch (error) {
-      throw new RedisUnavailableError(
-        `Redis HDEL failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
-  async removeSendMetadata(aggregateKeys: string[]): Promise<number> {
-    if (aggregateKeys.length === 0) {
-      return 0;
-    }
-
-    try {
-      return await this.client.hDel(REDIS_SEND_META_KEY, aggregateKeys);
-    } catch (error) {
-      throw new RedisUnavailableError(
-        `Redis HDEL failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-}
-
-async function getRedisClient(): Promise<RedisStateClient> {
-  const redisUrl = asString(process.env.REDIS_URL);
-
-  if (!redisUrl) {
-    throw new AppError(
-      500,
-      "CONFIG_ERROR",
-      "Missing REDIS_URL environment variable."
-    );
-  }
-
-  if (!redisClient) {
-    redisClient = createClient({ url: redisUrl });
-    redisClient.on("error", (error: unknown) => {
-      console.error("redis_client_error", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }
-
-  try {
-    if (!redisClient.isOpen) {
-      await redisClient.connect();
-    }
-  } catch (error) {
-    throw new RedisUnavailableError(
-      `Redis connect failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-
-  return new RedisStateClient(redisClient);
-}
-
-function topicForMunicipalityLanguage(
-  municipalityId: string,
-  languageCode: SupportedPushLanguage
-): string {
-  return `warngebiet_${municipalityId}_${languageCode}`;
-}
-
-function aggregateStateKey(aggregate: MunicipalityAggregate): string {
-  return `${aggregate.kind}:${aggregate.municipalityId}`;
-}
-
-function aggregateLanguageStateKey(
-  aggregate: MunicipalityAggregate,
-  languageCode: SupportedPushLanguage
-): string {
-  return `${aggregateStateKey(aggregate)}:${languageCode}`;
-}
-
-function compareSendCandidates(left: SendCandidate, right: SendCandidate): number {
-  const leftGermanPriority = left.languageCode === "de" ? 0 : 1;
-  const rightGermanPriority = right.languageCode === "de" ? 0 : 1;
-
-  if (leftGermanPriority !== rightGermanPriority) {
-    return leftGermanPriority - rightGermanPriority;
-  }
-
-  return left.stateKey.localeCompare(right.stateKey);
-}
-
-function currentDayKeyVienna(epochMs: number = Date.now()): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Vienna",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(epochMs));
-
-  const year = parts.find((part) => part.type === "year")?.value;
-  const month = parts.find((part) => part.type === "month")?.value;
-  const day = parts.find((part) => part.type === "day")?.value;
-
-  if (!year || !month || !day) {
-    return new Date(epochMs).toISOString().slice(0, 10);
-  }
-
-  return `${year}-${month}-${day}`;
-}
-
-function dayKeyDaysAgoVienna(daysAgo: number): string {
-  const millisPerDay = 24 * 60 * 60 * 1000;
-  return currentDayKeyVienna(Date.now() - daysAgo * millisPerDay);
-}
-
-function pushContentForWarning(
-  aggregate: MunicipalityAggregate,
-  timeWindow: TimeWindow,
-  languageCode: SupportedPushLanguage,
-  previousTimeWindow: TimeWindow | null = null,
-  timeWindowChanged: boolean = false
-): { title: string; body: string; collapsePrefix: string } {
-  const localization = pushLocalizationFor(languageCode);
-  const name = municipalityDisplayName(aggregate.municipalityId, languageCode);
-  const timeWindowText = buildTimeWindowText(timeWindow, languageCode);
-  const timeWindowChangeText = timeWindowChanged
-    ? buildTimeWindowChangeText(previousTimeWindow, timeWindow, languageCode)
-    : "";
-
-  const bodyBase = localization.buildHeatBody(name, aggregate.maxLevel);
-  return {
-    title: localization.heatWarningTitle,
-    body: timeWindowChangeText
-      ? `${bodyBase} ${timeWindowChangeText}`
-      : timeWindowText
-        ? `${bodyBase} ${timeWindowText}`
-        : bodyBase,
-    collapsePrefix: "hitze",
-  };
-}
-
-export interface TestPushInput {
-  municipalityId: string;
-  title?: string;
-  body?: string;
-  languageCode?: SupportedPushLanguage;
-}
-
-export interface TestBulkPushInput {
-  municipalityIds: string[];
-  title?: string;
-  body?: string;
-  languageCode?: SupportedPushLanguage;
-}
-
-export interface TestPushTokenInput {
-  token: string;
-  title?: string;
-  body?: string;
-  languageCode?: SupportedPushLanguage;
-}
-
-export interface TestMunicipalityOption {
-  municipalityId: string;
-  name: string;
-}
-
-export function listTestMunicipalityOptions(): TestMunicipalityOption[] {
-  if (testMunicipalityOptions) {
-    return testMunicipalityOptions;
-  }
-
-  testMunicipalityOptions = loadMunicipalityRows()
-    .map((row) => ({
-      municipalityId: row.municipalityId,
-      name: row.name,
-    }))
-    .sort((left, right) => left.municipalityId.localeCompare(right.municipalityId, "de-AT"));
-
-  return testMunicipalityOptions;
-}
-
-export async function sendTestPushNotification(input: TestPushInput): Promise<{
-  messageId: string;
-  topic: string;
-  languageCode: SupportedPushLanguage;
-}> {
-  const municipalityId = input.municipalityId.trim();
-  if (!municipalityId) {
-    throw new AppError(400, "INVALID_INPUT", "municipalityId is required.");
-  }
-
-  const languageCode = normalizeSupportedPushLanguage(input.languageCode);
-  const localization = pushLocalizationFor(languageCode);
-  const topic = topicForMunicipalityLanguage(municipalityId, languageCode);
-  const messaging = getFirebaseMessagingClient();
-
-  const messageId = await messaging.send({
-    topic,
-    notification: {
-      title: input.title?.trim() || localization.defaultTopicTestTitle,
-      body: input.body?.trim() || localization.defaultTopicTestBody,
-    },
-    data: {
-      gemeindenr: municipalityId,
-      source: "manual_test",
-      warningLevel: "test",
-      languageCode,
-    },
-    apns: {
-      headers: {
-        "apns-collapse-id": `test-hitze-${municipalityId}-${languageCode}`,
-      },
-      payload: {
-        aps: {
-          sound: "default",
-          "thread-id": `test-hitze-${municipalityId}-${languageCode}`,
-        },
-      },
-    },
-  });
-
-  return { messageId, topic, languageCode };
-}
-
-export async function sendTestPushNotifications(
-  input: TestBulkPushInput
-): Promise<{
-  sent: Array<{ municipalityId: string; topic: string; messageId: string }>;
-  failed: Array<{ municipalityId: string; error: string }>;
-}> {
-  const municipalityIds = Array.from(
-    new Set(
-      input.municipalityIds
-        .map((municipalityId) => municipalityId.trim())
-        .filter((municipalityId) => municipalityId.length > 0)
-    )
-  );
-
-  if (municipalityIds.length === 0) {
-    throw new AppError(400, "INVALID_INPUT", "At least one municipalityId is required.");
-  }
-
-  const concurrency = getFcmSendConcurrency();
-  const results = await allSettledWithConcurrency(
-    municipalityIds,
-    concurrency,
-    (municipalityId) =>
-      sendTestPushNotification({
-        municipalityId,
-        title: input.title,
-        body: input.body,
-        languageCode: input.languageCode,
-      })
-  );
-
-  const sent: Array<{ municipalityId: string; topic: string; messageId: string }> = [];
-  const failed: Array<{ municipalityId: string; error: string }> = [];
-
-  results.forEach((result, index) => {
-    const municipalityId = municipalityIds[index];
-    if (result.status === "fulfilled") {
-      sent.push({
-        municipalityId,
-        topic: result.value.topic,
-        messageId: result.value.messageId,
-      });
-      return;
-    }
-
-    failed.push({
-      municipalityId,
-      error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-    });
-  });
-
-  return { sent, failed };
-}
-
-export async function sendTestPushToToken(
-  input: TestPushTokenInput
-): Promise<{ messageId: string; token: string }> {
-  const token = input.token.trim();
-  if (!token) {
-    throw new AppError(400, "INVALID_INPUT", "token is required.");
-  }
-
-  const messaging = getFirebaseMessagingClient();
-  const languageCode = normalizeSupportedPushLanguage(input.languageCode);
-  const localization = pushLocalizationFor(languageCode);
-
-  const messageId = await messaging.send({
-    token,
-    notification: {
-      title: input.title?.trim() || localization.defaultTokenTestTitle,
-      body: input.body?.trim() || localization.defaultTokenTestBody,
-    },
-    data: {
-      source: "manual_test_token",
-      warningLevel: "test",
-      languageCode,
-    },
-    apns: {
-      headers: {
-        "apns-collapse-id": `test-hitze-token-${languageCode}`,
-      },
-      payload: {
-        aps: {
-          sound: "default",
-          "thread-id": `test-hitze-token-${languageCode}`,
-        },
-      },
-    },
-  });
-
-  return { messageId, token };
-}
-
-async function sendMunicipalityWarning(
-  messaging: Messaging,
-  aggregate: MunicipalityAggregate,
-  languageCode: SupportedPushLanguage,
-  previousTimeWindow: TimeWindow | null = null,
-  timeWindowChanged: boolean = false
-): Promise<void> {
-  const warningIds = Array.from(aggregate.warningIds).sort();
-  const timeWindow = aggregateTimeWindow(aggregate);
-  const topic = topicForMunicipalityLanguage(aggregate.municipalityId, languageCode);
-  const content = pushContentForWarning(
-    aggregate,
-    timeWindow,
-    languageCode,
-    previousTimeWindow,
-    timeWindowChanged
-  );
-  const collapseId = `${content.collapsePrefix}-${aggregate.municipalityId}-${languageCode}`;
-  const warningStartLocal = formatPushTime(timeWindow.start, languageCode);
-  const warningEndLocal = formatPushTime(timeWindow.end, languageCode);
-
-  await messaging.send({
-    topic,
-    notification: {
-      title: content.title,
-      body: content.body,
-    },
-    data: {
-      gemeindenr: aggregate.municipalityId,
-      gemeindename: municipalityDisplayName(
-        aggregate.municipalityId,
-        languageCode
-      ),
-      warningKind: aggregate.kind,
-      warningLevel: String(aggregate.maxLevel),
-      warningIds: warningIds.join(","),
-      warningStart: timeWindow.start,
-      warningEnd: timeWindow.end,
-      warningStartLocal,
-      warningEndLocal,
-      source: "geosphere",
-      languageCode,
-    },
-    apns: {
-      headers: {
-        "apns-collapse-id": collapseId,
-      },
-      payload: {
-        aps: {
-          sound: "default",
-          "thread-id": collapseId,
-        },
-      },
-    },
-  });
-}
-
-function mapError(error: unknown): AppError {
-  if (error instanceof AppError) {
-    return error;
-  }
-
-  return new AppError(
-    500,
-    "INTERNAL_ERROR",
-    error instanceof Error ? error.message : "Unexpected error"
-  );
-}
-
-export interface HitzeCronHttpResponse {
-  status: number;
-  headers?: Record<string, string>;
-  body: Record<string, unknown>;
-}
+import { sharedRedis } from "./redis";
+import { renderPush, type PushDay } from "./renderer";
+import { RedisCronStateStore, legacySentKey, type CronStateStore, type LastPush, type LegacySent, type StateUpdate } from "./state";
+import { viennaDateKey, viennaHour } from "./time";
 
 export {
   DEFAULT_PUSH_LANGUAGE,
@@ -1570,6 +39,596 @@ export {
   type SupportedPushLanguage,
 };
 
+export const PUSH_QUIET_HOURS_START = 20;
+export const PUSH_QUIET_HOURS_END = 6;
+export const MAX_TEST_BULK_IDS = 50;
+const MAX_FAILED_TARGETS_IN_RESPONSE = 50;
+
+export function isQuietHours(nowMs: number): boolean {
+  const hour = viennaHour(nowMs);
+  return hour >= PUSH_QUIET_HOURS_START || hour < PUSH_QUIET_HOURS_END;
+}
+
+export function legacyLanguagesFor(mode: LegacyLanguageTopicsMode): string[] {
+  if (mode === "off") {
+    return [];
+  }
+  if (mode === "de") {
+    return ["de"];
+  }
+  // German first so the largest audience is served first.
+  return ["de", ...SUPPORTED_PUSH_LANGUAGES.filter((language) => language !== "de")];
+}
+
+export interface CronDeps {
+  now: () => number;
+  store: CronStateStore;
+  messaging: () => MessagingLike;
+  fetchFeed: (requestId: string) => Promise<FeedResult>;
+  config: CronConfig;
+  reporter: CronReporter;
+  signal?: AbortSignal;
+}
+
+export interface HitzeCronHttpResponse {
+  status: number;
+  headers?: Record<string, string>;
+  body: Record<string, unknown>;
+}
+
+export interface CronRunSummary {
+  requestId: string;
+  processedWarnings: number;
+  affectedMunicipalities: number;
+  events: { new: number; escalated: number; updated: number };
+  v2Sent: number;
+  v2Failed: number;
+  legacySent: number;
+  legacyFailed: number;
+  legacySkippedAlreadyDelivered: number;
+  legacyRetries: number;
+  silentUpdates: number;
+  deferredQuietHours: number;
+  deferredRateLimited: number;
+  deferredAborted: number;
+  stateWriteFailures: number;
+  clearedStates: number;
+  pushQuietHoursActive: boolean;
+  pushQuietHoursWindow: string;
+  legacyLanguageTopics: LegacyLanguageTopicsMode;
+  fcmSendConcurrency: number;
+  cronLockTtlSeconds: number;
+  failedTargets: string[];
+  durationMs: number;
+}
+
+function quietHoursLabel(): string {
+  const pad = (hour: number): string => String(hour).padStart(2, "0");
+  return `${pad(PUSH_QUIET_HOURS_START)}:00-${pad(PUSH_QUIET_HOURS_END)}:00 Europe/Vienna`;
+}
+
+function fingerprintOf(content: Pick<PushContent, "event" | "days" | "warningIds">): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ event: content.event, days: content.days, warningIds: content.warningIds }))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+class SendAborted extends Error {
+  constructor() {
+    super("send aborted");
+  }
+}
+
+function createLimiter(concurrency: number): <T>(task: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  const next = (): void => {
+    active -= 1;
+    queue.shift()?.();
+  };
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    if (active >= concurrency) {
+      await new Promise<void>((resolve) => queue.push(resolve));
+    }
+    active += 1;
+    try {
+      return await task();
+    } finally {
+      next();
+    }
+  };
+}
+
+async function runPool<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
+  let index = 0;
+  const runners = Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, async () => {
+    while (index < items.length) {
+      const item = items[index];
+      index += 1;
+      await worker(item);
+    }
+  });
+  await Promise.all(runners);
+}
+
+interface EventJob {
+  kind: "event";
+  decision: GkzDecision;
+}
+
+interface RetryJob {
+  kind: "legacy-retry";
+  gkz: string;
+  lastPush: LastPush;
+  languages: string[];
+}
+
+export async function runHitzeCron(deps: CronDeps): Promise<HitzeCronHttpResponse> {
+  const startedAt = Date.now();
+  const requestId = randomUUID();
+  const { store, config } = deps;
+  const lockToken = randomUUID();
+  let lockAcquired = false;
+  let lockTimer: NodeJS.Timeout | null = null;
+  let lockLost = false;
+
+  try {
+    lockAcquired = await store.acquireLock(lockToken, config.cronLockTtlSeconds);
+    if (!lockAcquired) {
+      return {
+        status: 200,
+        body: {
+          requestId,
+          skipped: true,
+          skipReason: "CRON_ALREADY_RUNNING",
+          message: "Another heat warning cron run is still active.",
+          durationMs: Date.now() - startedAt,
+        },
+      };
+    }
+
+    lockTimer = setInterval(() => {
+      store.refreshLock(lockToken, config.cronLockTtlSeconds).then(
+        (stillOwned) => {
+          if (!stillOwned) {
+            lockLost = true;
+            console.error(`[${requestId}] cron_lock_lost`);
+          }
+        },
+        (error: unknown) => {
+          console.warn(`[${requestId}] cron_lock_refresh_failed`, { error: errorMessage(error) });
+        }
+      );
+    }, Math.max(1_000, Math.floor((config.cronLockTtlSeconds * 1000) / 3)));
+    lockTimer.unref();
+
+    const nowMs = deps.now();
+    const today = viennaDateKey(nowMs);
+    const feed = await deps.fetchFeed(requestId);
+    const warnings = normalizeFeatures(feed.features, config.minLevel, nowMs);
+    const byGkz = groupByGkzDay(warnings, nowMs);
+    const legacyLanguages = legacyLanguagesFor(config.legacyLanguageTopics);
+
+    const dayStates = await store.loadDayStates();
+    const lastPushes = await store.loadLastPushes();
+    const legacySent = legacyLanguages.length > 0 ? await store.loadLegacySent() : new Map<string, LegacySent>();
+
+    const expiredDayStates = expiredStateKeys(dayStates.keys(), nowMs);
+    const expiredLastPushes = Array.from(lastPushes).filter(([, push]) => push.expiresAt <= nowMs).map(([gkz]) => gkz);
+    const expiredLegacy = Array.from(legacySent).filter(([, entry]) => entry.expiresAt <= nowMs).map(([key]) => key);
+    if (expiredDayStates.length + expiredLastPushes.length + expiredLegacy.length > 0) {
+      await store.deleteEntries({ dayStates: expiredDayStates, lastPushes: expiredLastPushes, legacySent: expiredLegacy });
+      expiredDayStates.forEach((key) => dayStates.delete(key));
+      expiredLastPushes.forEach((gkz) => lastPushes.delete(gkz));
+      expiredLegacy.forEach((key) => legacySent.delete(key));
+    }
+
+    const decisions = decideAll(byGkz, dayStates, nowMs);
+    const quiet = isQuietHours(nowMs);
+
+    const summary: CronRunSummary = {
+      requestId,
+      processedWarnings: warnings.length,
+      affectedMunicipalities: decisions.filter((decision) => decision.classified.length > 0).length,
+      events: { new: 0, escalated: 0, updated: 0 },
+      v2Sent: 0,
+      v2Failed: 0,
+      legacySent: 0,
+      legacyFailed: 0,
+      legacySkippedAlreadyDelivered: 0,
+      legacyRetries: 0,
+      silentUpdates: 0,
+      deferredQuietHours: 0,
+      deferredRateLimited: 0,
+      deferredAborted: 0,
+      stateWriteFailures: 0,
+      clearedStates: expiredDayStates.length,
+      pushQuietHoursActive: quiet,
+      pushQuietHoursWindow: quietHoursLabel(),
+      legacyLanguageTopics: config.legacyLanguageTopics,
+      fcmSendConcurrency: config.fcmSendConcurrency,
+      cronLockTtlSeconds: config.cronLockTtlSeconds,
+      failedTargets: [],
+      durationMs: 0,
+    };
+
+    let abortReason: string | null = null;
+    const aborted = (): boolean => {
+      if (!abortReason && deps.signal?.aborted) {
+        abortReason = "shutdown";
+      }
+      if (!abortReason && lockLost) {
+        abortReason = "lock_lost";
+      }
+      return abortReason !== null;
+    };
+
+    const persist = async (gkz: string, update: StateUpdate): Promise<void> => {
+      try {
+        await store.persist(update);
+      } catch (error) {
+        summary.stateWriteFailures += 1;
+        // Stop sending: every further push could not be recorded and would repeat next run.
+        abortReason = abortReason ?? "state_write_failed";
+        console.error(`[${requestId}] state_write_failed`, { gkz, error: errorMessage(error) });
+      }
+    };
+
+    const jobs: Array<EventJob | RetryJob> = [];
+    const silentOnly: Record<string, DayState> = {};
+    const eventGkz = new Set<string>();
+
+    for (const decision of decisions) {
+      summary.deferredRateLimited += decision.classified.filter((entry) => entry.cls === "updated-limited").length;
+      summary.silentUpdates += Object.keys(decision.silentStates).length;
+
+      if (!decision.event) {
+        Object.assign(silentOnly, decision.silentStates);
+        continue;
+      }
+      eventGkz.add(decision.gkz);
+      if (quiet) {
+        summary.deferredQuietHours += 1;
+        Object.assign(silentOnly, decision.silentStates);
+        continue;
+      }
+      jobs.push({ kind: "event", decision });
+    }
+
+    if (Object.keys(silentOnly).length > 0) {
+      await persist("silent", { dayStates: silentOnly });
+    }
+
+    if (!quiet && legacyLanguages.length > 0) {
+      for (const [gkz, lastPush] of lastPushes) {
+        if (eventGkz.has(gkz)) {
+          continue;
+        }
+        const pending = lastPush.legacyLanguages.filter(
+          (language) =>
+            legacyLanguages.includes(language) &&
+            legacySent.get(legacySentKey(gkz, language))?.fingerprint !== lastPush.fingerprint
+        );
+        if (pending.length > 0 && lastPush.days.some((day) => day.date >= today)) {
+          jobs.push({ kind: "legacy-retry", gkz, lastPush, languages: pending });
+        }
+      }
+    }
+
+    const limit = createLimiter(config.fcmSendConcurrency);
+    const send = (message: Message): Promise<string> =>
+      limit(async () => {
+        if (aborted()) {
+          throw new SendAborted();
+        }
+        return deps.messaging().send(message);
+      });
+
+    const recordFailure = (target: string, error: unknown): void => {
+      if (summary.failedTargets.length < MAX_FAILED_TARGETS_IN_RESPONSE) {
+        summary.failedTargets.push(target);
+      }
+      console.error(`[${requestId}] fcm_send_failed`, { target, code: firebaseErrorCode(error) });
+    };
+
+    const sendLegacy = async (
+      content: PushContent,
+      fingerprint: string,
+      languages: string[],
+      expiresAt: number
+    ): Promise<Record<string, LegacySent>> => {
+      const delivered: Record<string, LegacySent> = {};
+      await Promise.all(
+        languages.map(async (language) => {
+          const key = legacySentKey(content.gkz, language);
+          if (legacySent.get(key)?.fingerprint === fingerprint) {
+            summary.legacySkippedAlreadyDelivered += 1;
+            return;
+          }
+          try {
+            await send(buildLegacyMessage(content, language));
+            summary.legacySent += 1;
+            delivered[key] = { fingerprint, expiresAt };
+          } catch (error) {
+            if (error instanceof SendAborted) {
+              return;
+            }
+            summary.legacyFailed += 1;
+            recordFailure(legacyTopic(content.gkz, language), error);
+          }
+        })
+      );
+      return delivered;
+    };
+
+    await runPool(jobs, config.fcmSendConcurrency, async (job) => {
+      if (aborted()) {
+        if (job.kind === "event") {
+          summary.deferredAborted += 1;
+        }
+        return;
+      }
+
+      if (job.kind === "legacy-retry") {
+        const days = job.lastPush.days.filter((day) => day.date >= today);
+        const content: PushContent = {
+          event: job.lastPush.event,
+          gkz: job.gkz,
+          name: job.lastPush.name,
+          days,
+          warningIds: job.lastPush.warningIds,
+          nowMs,
+        };
+        summary.legacyRetries += job.languages.length;
+        const delivered = await sendLegacy(content, job.lastPush.fingerprint, job.languages, job.lastPush.expiresAt);
+        if (Object.keys(delivered).length > 0) {
+          await persist(job.gkz, { legacySent: delivered });
+        }
+        return;
+      }
+
+      const { decision } = job;
+      const event = decision.event;
+      if (!event) {
+        return;
+      }
+      const days: PushDay[] = decision.days.map(toPushDay);
+      const warningIds = Array.from(new Set(decision.days.flatMap((day) => day.warningIds))).sort();
+      const content: PushContent = {
+        event,
+        gkz: decision.gkz,
+        name: municipalityName(decision.gkz),
+        days,
+        warningIds,
+        nowMs,
+      };
+      const fingerprint = fingerprintOf(content);
+      const expiresAt = latestDayEndMs(days) ?? nowMs;
+
+      const v2Result = send(buildV2Message(content)).then(
+        () => "sent" as const,
+        (error: unknown) => {
+          if (error instanceof SendAborted) {
+            return "aborted" as const;
+          }
+          recordFailure(v2Topic(decision.gkz), error);
+          return "failed" as const;
+        }
+      );
+      const [v2, delivered] = await Promise.all([
+        v2Result,
+        sendLegacy(content, fingerprint, legacyLanguages, expiresAt),
+      ]);
+
+      const update: StateUpdate = { dayStates: { ...decision.silentStates }, legacySent: delivered };
+      if (v2 === "sent") {
+        summary.v2Sent += 1;
+        summary.events[event] += 1;
+        Object.assign(update.dayStates ?? {}, decision.pushedStates);
+        update.lastPush = {
+          gkz: decision.gkz,
+          value: {
+            fingerprint,
+            event,
+            name: content.name,
+            days,
+            warningIds,
+            sentAt: new Date(nowMs).toISOString(),
+            expiresAt,
+            legacyLanguages,
+          },
+        };
+      } else if (v2 === "failed") {
+        summary.v2Failed += 1;
+      } else {
+        summary.deferredAborted += 1;
+      }
+      await persist(decision.gkz, update);
+    });
+
+    if (abortReason) {
+      console.warn(`[${requestId}] cron_sends_aborted`, { reason: abortReason, deferred: summary.deferredAborted });
+    }
+
+    summary.durationMs = Date.now() - startedAt;
+    console.log(`[${requestId}] cron_completed`, {
+      warnings: summary.processedWarnings,
+      municipalities: summary.affectedMunicipalities,
+      events: summary.events,
+      v2Sent: summary.v2Sent,
+      v2Failed: summary.v2Failed,
+      legacySent: summary.legacySent,
+      legacyFailed: summary.legacyFailed,
+      deferredQuietHours: summary.deferredQuietHours,
+      deferredAborted: summary.deferredAborted,
+      stateWriteFailures: summary.stateWriteFailures,
+      durationMs: summary.durationMs,
+    });
+
+    const attempted = summary.v2Sent + summary.v2Failed + summary.legacySent + summary.legacyFailed;
+    if (attempted > 0) {
+      await deps.reporter.runReport({
+        requestId,
+        processedWarnings: summary.processedWarnings,
+        affectedMunicipalities: summary.affectedMunicipalities,
+        v2Sent: summary.v2Sent,
+        v2Failed: summary.v2Failed,
+        legacySent: summary.legacySent,
+        legacyFailed: summary.legacyFailed,
+        deferredQuietHours: summary.deferredQuietHours,
+        deferredRateLimited: summary.deferredRateLimited,
+        failedTargets: summary.failedTargets,
+        stateWriteFailures: summary.stateWriteFailures,
+        durationMs: summary.durationMs,
+      });
+    }
+    if (summary.stateWriteFailures > 0) {
+      await deps.reporter.failureReport({
+        requestId,
+        errorCode: "STATE_WRITE_FAILED",
+        message: `${summary.stateWriteFailures} Redis-Schreibvorgänge fehlgeschlagen; ${summary.deferredAborted} Gemeinden zurückgestellt.`,
+      });
+    }
+
+    return { status: 200, body: { ...summary } };
+  } catch (error) {
+    const appError = toAppError(error);
+    console.error(`[${requestId}] cron_failed`, { code: appError.code, status: appError.status, message: appError.message });
+    await deps.reporter.failureReport({ requestId, errorCode: appError.code, message: appError.message });
+    return {
+      status: appError.status,
+      body: { requestId, errorCode: appError.code, message: appError.message, durationMs: Date.now() - startedAt },
+    };
+  } finally {
+    if (lockTimer) {
+      clearInterval(lockTimer);
+    }
+    if (lockAcquired) {
+      try {
+        await store.releaseLock(lockToken);
+      } catch (error) {
+        console.error(`[${requestId}] cron_lock_release_failed`, { error: errorMessage(error) });
+      }
+    }
+  }
+}
+
+export function defaultCronDeps(signal?: AbortSignal): CronDeps {
+  return {
+    now: () => Date.now(),
+    store: new RedisCronStateStore(sharedRedis),
+    messaging: getFirebaseMessaging,
+    fetchFeed: fetchGeoSphereFeed,
+    config: loadCronConfig(),
+    reporter: pushoverReporter,
+    signal,
+  };
+}
+
+export function executeHitzeCron(signal?: AbortSignal): Promise<HitzeCronHttpResponse> {
+  return runHitzeCron(defaultCronDeps(signal));
+}
+
+// ---------- develop-only helpers (test UI) ----------
+
+export type TestPushFormat = "v2" | "legacy";
+
+export interface TestPushOptions {
+  format: TestPushFormat;
+  /** Legacy topic language / rendering language; ignored for v2 topics. */
+  language?: SupportedPushLanguage;
+  title?: string;
+  body?: string;
+}
+
+function testContent(gkz: string, nowMs: number): PushContent {
+  return { event: "test", gkz, name: municipalityName(gkz), days: [], warningIds: [], nowMs };
+}
+
+function testPayload(gkz: string, options: TestPushOptions, nowMs: number): Omit<TopicMessage, "topic"> {
+  const content = testContent(gkz, nowMs);
+  if (options.format === "v2") {
+    const rendered = renderPush({ event: "test", name: content.name, days: [], nowMs, language: "de" });
+    return buildV2Payload(content, {
+      title: options.title?.trim() || rendered.title,
+      body: options.body?.trim() || rendered.body,
+    });
+  }
+  return buildLegacyPayload(content, options.language ?? "de", { title: options.title, body: options.body });
+}
+
+export interface TestPushResult {
+  municipalityId: string;
+  topic: string;
+  format: TestPushFormat;
+  language: string | null;
+  messageId: string;
+}
+
+export async function sendTestPush(
+  municipalityId: string,
+  options: TestPushOptions,
+  messaging: MessagingLike = getFirebaseMessaging(),
+  nowMs: number = Date.now()
+): Promise<TestPushResult> {
+  const gkz = municipalityId.replace(/\s+/g, "");
+  if (!gkz) {
+    throw new AppError(400, "INVALID_INPUT", "municipalityId is required.");
+  }
+  const language = options.format === "legacy" ? options.language ?? "de" : null;
+  const topic = options.format === "v2" ? v2Topic(gkz) : legacyTopic(gkz, language ?? "de");
+  const messageId = await messaging.send({ topic, ...testPayload(gkz, options, nowMs) });
+  return { municipalityId: gkz, topic, format: options.format, language, messageId };
+}
+
+export async function sendTestPushBulk(
+  municipalityIds: string[],
+  options: TestPushOptions,
+  concurrency: number
+): Promise<{ sent: TestPushResult[]; failed: Array<{ municipalityId: string; error: string; code: string }> }> {
+  const ids = Array.from(new Set(municipalityIds.map((id) => id.replace(/\s+/g, "")).filter(Boolean)));
+  if (ids.length === 0) {
+    throw new AppError(400, "INVALID_INPUT", "At least one municipalityId is required.");
+  }
+  if (ids.length > MAX_TEST_BULK_IDS) {
+    throw new AppError(400, "INVALID_INPUT", `At most ${MAX_TEST_BULK_IDS} municipalities per test send.`);
+  }
+
+  const messaging = getFirebaseMessaging();
+  const sent: TestPushResult[] = [];
+  const failed: Array<{ municipalityId: string; error: string; code: string }> = [];
+  await runPool(ids, concurrency, async (id) => {
+    try {
+      sent.push(await sendTestPush(id, options, messaging));
+    } catch (error) {
+      failed.push({ municipalityId: id, error: errorMessage(error), code: firebaseErrorCode(error) });
+    }
+  });
+  sent.sort((a, b) => a.municipalityId.localeCompare(b.municipalityId));
+  return { sent, failed };
+}
+
+export async function sendTestPushToToken(
+  token: string,
+  municipalityId: string,
+  options: TestPushOptions
+): Promise<{ messageId: string; tokenSuffix: string }> {
+  const trimmed = token.trim();
+  if (!trimmed) {
+    throw new AppError(400, "INVALID_INPUT", "token is required.");
+  }
+  const gkz = municipalityId.replace(/\s+/g, "") || "90101";
+  const messageId = await getFirebaseMessaging().send(toTokenMessage(trimmed, testPayload(gkz, options, Date.now())));
+  return { messageId, tokenSuffix: trimmed.slice(-6) };
+}
+
+export function listTestMunicipalityOptions(): MunicipalityOption[] {
+  return listMunicipalities();
+}
+
+// ---------- develop-only warnings snapshot ----------
+
 export interface CurrentWarningsSnapshotMunicipality {
   municipalityId: string;
   name: string;
@@ -1577,11 +636,12 @@ export interface CurrentWarningsSnapshotMunicipality {
   start: string | null;
   end: string | null;
   contributingWarningIds: string[];
+  days: PushDay[];
 }
 
 export interface CurrentWarningsSnapshotMapFeature {
   id: string;
-  kind: WarningKind;
+  kind: "heat";
   level: number;
   start: string | null;
   end: string | null;
@@ -1605,340 +665,45 @@ export interface CurrentWarningsSnapshot {
 
 export async function loadCurrentWarningsSnapshot(): Promise<CurrentWarningsSnapshot> {
   const requestId = randomUUID();
-  const minWarningLevel = getMinWarningLevel();
-  const isStatic = useStaticGeoSphereResponse();
-  const sourceUrl = isStatic ? getStaticGeoSphereUrl() ?? "" : GEOSPHERE_WARNSTATUS_URL;
   const startedAt = Date.now();
+  const config = loadCronConfig();
+  const feed = await fetchGeoSphereFeed(requestId);
+  const warnings = normalizeFeatures(feed.features, config.minLevel, startedAt);
+  const byGkz = groupByGkzDay(warnings, startedAt);
 
-  const { warnings, rawFeatureCount } = await fetchGeoSphereWarningsWithStats(
-    requestId,
-    minWarningLevel
-  );
-
-  const aggregates = aggregateWarnings(warnings);
-
-  const affectedMunicipalities: CurrentWarningsSnapshotMunicipality[] = Array.from(
-    aggregates.values()
-  )
-    .map((aggregate) => {
-      const window = aggregateTimeWindow(aggregate);
-      return {
-        municipalityId: aggregate.municipalityId,
-        name: municipalityDisplayName(aggregate.municipalityId, DEFAULT_PUSH_LANGUAGE),
-        maxLevel: aggregate.maxLevel,
-        start: window.start ? window.start : null,
-        end: window.end ? window.end : null,
-        contributingWarningIds: Array.from(aggregate.warningIds).sort(),
-      };
-    })
-    .sort((a, b) => {
-      if (a.maxLevel !== b.maxLevel) {
-        return b.maxLevel - a.maxLevel;
-      }
-      return a.municipalityId.localeCompare(b.municipalityId);
-    });
-
-  const mapFeatures: CurrentWarningsSnapshotMapFeature[] = warnings.map((warning) => ({
-    id: warning.id,
-    kind: warning.kind,
-    level: warning.level,
-    start: warning.start ? warning.start : null,
-    end: warning.end ? warning.end : null,
-    municipalityCount: warning.municipalities.length,
-    municipalityIds: warning.municipalities,
-    geometry: warning.geometry,
-  }));
+  const affectedMunicipalities = Array.from(byGkz, ([gkz, days]) => {
+    const starts = days.map((day) => day.start);
+    const ends = days.map((day) => day.end).filter(Boolean).sort();
+    return {
+      municipalityId: gkz,
+      name: municipalityName(gkz),
+      maxLevel: Math.max(...days.map((day) => day.level)),
+      start: starts.some((value) => !value) ? null : starts.sort()[0] ?? null,
+      end: ends.at(-1) ?? null,
+      contributingWarningIds: Array.from(new Set(days.flatMap((day) => day.warningIds))).sort(),
+      days: days.map(toPushDay),
+    };
+  }).sort((a, b) => b.maxLevel - a.maxLevel || a.municipalityId.localeCompare(b.municipalityId));
 
   return {
     requestId,
     fetchedAt: new Date().toISOString(),
     durationMs: Date.now() - startedAt,
-    source: isStatic ? "static" : "live",
-    sourceUrl,
-    minWarningLevel,
-    rawFeatureCount,
+    source: feed.source,
+    sourceUrl: feed.sourceLocation,
+    minWarningLevel: config.minLevel,
+    rawFeatureCount: feed.features.length,
     acceptedWarningCount: warnings.length,
     affectedMunicipalities,
-    mapFeatures,
+    mapFeatures: warnings.map((warning) => ({
+      id: warning.id,
+      kind: "heat",
+      level: warning.level,
+      start: warning.start || null,
+      end: warning.end || null,
+      municipalityCount: warning.municipalities.length,
+      municipalityIds: warning.municipalities,
+      geometry: warning.geometry,
+    })),
   };
-}
-
-export async function executeHitzeCron(method?: string): Promise<HitzeCronHttpResponse> {
-  const startedAt = Date.now();
-  const requestId = randomUUID();
-  let redis: RedisStateClient | null = null;
-  let lockToken: string | null = null;
-  let lockAcquired = false;
-
-  if (method && !["GET", "POST"].includes(method.toUpperCase())) {
-    return {
-      status: 405,
-      headers: { Allow: "GET, POST" },
-      body: {
-        requestId,
-        errorCode: "METHOD_NOT_ALLOWED",
-        message: "Only GET or POST are allowed.",
-      },
-    };
-  }
-
-  try {
-    const minWarningLevel = getMinWarningLevel();
-    redis = await getRedisClient();
-    lockToken = randomUUID();
-    const cronLockTtlSeconds = getCronLockTtlSeconds();
-    lockAcquired = await redis.acquireCronLock(lockToken, cronLockTtlSeconds);
-
-    if (!lockAcquired) {
-      return {
-        status: 200,
-        body: {
-          requestId,
-          skipped: true,
-          skipReason: "CRON_ALREADY_RUNNING",
-          message: "Another heat warning cron run is still active.",
-          durationMs: Date.now() - startedAt,
-        },
-      };
-    }
-
-    const normalizedWarnings = await fetchGeoSphereWarnings(requestId, minWarningLevel);
-    const aggregatesMap = aggregateWarnings(normalizedWarnings);
-
-    const aggregates = Array.from(aggregatesMap.values()).sort((a, b) =>
-      aggregateStateKey(a).localeCompare(aggregateStateKey(b))
-    );
-
-    const currentSignatures: Record<string, string> = {};
-    for (const aggregate of aggregates) {
-      const signature = buildMunicipalitySignature(aggregate);
-      for (const languageCode of SUPPORTED_PUSH_LANGUAGES) {
-        currentSignatures[aggregateLanguageStateKey(aggregate, languageCode)] = signature;
-      }
-    }
-
-    const previousSignatures = await redis.getSignatures();
-    const previousSendMetadata = await redis.getSendMetadata();
-    const todayDayKey = currentDayKeyVienna();
-    const sendMetaCutoffDayKey = dayKeyDaysAgoVienna(SEND_META_RETENTION_DAYS);
-
-    const staleSendMetadataKeys = Object.entries(previousSendMetadata)
-      .filter(([, metadata]) => metadata.dayKey < sendMetaCutoffDayKey)
-      .map(([key]) => key);
-
-    if (staleSendMetadataKeys.length > 0) {
-      await redis.removeSendMetadata(staleSendMetadataKeys);
-      staleSendMetadataKeys.forEach((key) => {
-        delete previousSendMetadata[key];
-      });
-    }
-
-    const previousStateKeys = new Set([
-      ...Object.keys(previousSignatures),
-      ...Object.keys(previousSendMetadata),
-    ]);
-    const currentStateKeys = new Set(Object.keys(currentSignatures));
-    const currentStateKeyCount = Object.keys(currentSignatures).length;
-
-    const changedStateKeys = Object.keys(currentSignatures)
-      .filter((key) => previousSignatures[key] !== currentSignatures[key]);
-
-    const removedStateKeys = Array.from(previousStateKeys).filter((key) => !currentStateKeys.has(key));
-
-    const sendCandidates: SendCandidate[] = [];
-    const skippedRateLimitedKeys = new Set<string>();
-    const skippedQuietHoursKeys = new Set<string>();
-    const pushQuietHoursActive = isPushQuietHoursVienna();
-
-    for (const aggregate of aggregates) {
-      const signature = buildMunicipalitySignature(aggregate);
-
-      for (const languageCode of SUPPORTED_PUSH_LANGUAGES) {
-        const key = aggregateLanguageStateKey(aggregate, languageCode);
-        if (previousSignatures[key] === signature) {
-          continue;
-        }
-
-        const previousMetadata = previousSendMetadata[key];
-        const currentTimeWindow = aggregateTimeWindow(aggregate);
-        const currentStart = currentTimeWindow.start;
-        const currentEnd = currentTimeWindow.end;
-        const sentToday = previousMetadata?.dayKey === todayDayKey;
-        const beginChanged = (previousMetadata?.start ?? "") !== currentStart;
-        const endChanged = (previousMetadata?.end ?? "") !== currentEnd;
-
-        if (!sentToday || beginChanged || endChanged) {
-          if (pushQuietHoursActive) {
-            skippedQuietHoursKeys.add(key);
-            continue;
-          }
-
-          sendCandidates.push({
-            aggregate,
-            languageCode,
-            stateKey: key,
-            signature,
-            previousTimeWindow: previousMetadata
-              ? {
-                  start: previousMetadata.start,
-                  end: previousMetadata.end,
-                }
-              : null,
-            timeWindowChanged: beginChanged || endChanged,
-          });
-          continue;
-        }
-
-        skippedRateLimitedKeys.add(key);
-      }
-    }
-
-    sendCandidates.sort(compareSendCandidates);
-
-    const fcmSendConcurrency = getFcmSendConcurrency();
-
-    const sendResults =
-      sendCandidates.length > 0
-        ? await allSettledWithConcurrency(
-            sendCandidates,
-            fcmSendConcurrency,
-            async (candidate) => {
-              const messaging = getFirebaseMessagingClient();
-              await sendMunicipalityWarning(
-                messaging,
-                candidate.aggregate,
-                candidate.languageCode,
-                candidate.previousTimeWindow,
-                candidate.timeWindowChanged
-              );
-              return candidate.stateKey;
-            }
-          )
-        : [];
-
-    const signaturesToPersist: Record<string, string> = {};
-    const sendMetadataToPersist: Record<string, AggregateSendMetadata> = {};
-    const failedMunicipalities = new Set<string>();
-    const failedTargets: string[] = [];
-
-    sendResults.forEach((result, index) => {
-      const candidate = sendCandidates[index];
-      const aggregate = candidate?.aggregate;
-      const key = candidate?.stateKey ?? null;
-
-      if (!aggregate || !key) {
-        return;
-      }
-
-      if (result.status === "fulfilled") {
-        signaturesToPersist[key] = candidate.signature;
-        const timeWindow = aggregateTimeWindow(aggregate);
-        sendMetadataToPersist[key] = {
-          dayKey: todayDayKey,
-          start: timeWindow.start,
-          end: timeWindow.end,
-        };
-        return;
-      }
-
-      failedMunicipalities.add(`${aggregate.kind}:${aggregate.municipalityId}`);
-      failedTargets.push(key);
-      console.error(`[${requestId}] fcm_send_failed`, {
-        municipalityId: aggregate.municipalityId,
-        warningKind: aggregate.kind,
-        languageCode: candidate.languageCode,
-        error:
-          result.reason instanceof Error
-            ? result.reason.message
-            : String(result.reason),
-      });
-    });
-
-    for (const key of skippedRateLimitedKeys) {
-      signaturesToPersist[key] = currentSignatures[key];
-    }
-
-    if (Object.keys(signaturesToPersist).length > 0) {
-      await redis.setSignatures(signaturesToPersist);
-    }
-
-    if (Object.keys(sendMetadataToPersist).length > 0) {
-      await redis.setSendMetadata(sendMetadataToPersist);
-    }
-
-    const cleared = await redis.removeSignatures(removedStateKeys);
-    await redis.removeSendMetadata(removedStateKeys);
-
-    const response: HandlerSuccessResponse = {
-      requestId,
-      processedWarnings: normalizedWarnings.length,
-      affectedMunicipalities: aggregates.length,
-      affectedLanguageTargets: currentStateKeyCount,
-      fcmSendConcurrency,
-      cronLockTtlSeconds,
-      pushQuietHoursActive,
-      pushQuietHoursWindow: pushQuietHoursWindowLabel(),
-      sent: Object.keys(sendMetadataToPersist).length,
-      skippedUnchanged: currentStateKeyCount - changedStateKeys.length,
-      skippedRateLimited: skippedRateLimitedKeys.size,
-      skippedQuietHours: skippedQuietHoursKeys.size,
-      cleared,
-      failed: failedTargets.length,
-      failedMunicipalities: Array.from(failedMunicipalities),
-      failedTargets,
-      durationMs: Date.now() - startedAt,
-    };
-
-    if (normalizedWarnings.length > 0 && sendCandidates.length > 0) {
-      await sendPushoverReport({
-        requestId,
-        processedWarnings: response.processedWarnings,
-        affectedMunicipalities: response.affectedMunicipalities,
-        sent: response.sent,
-        attempted: sendCandidates.length,
-        skippedRateLimited: response.skippedRateLimited,
-        skippedQuietHours: response.skippedQuietHours,
-        failed: response.failed,
-        failedMunicipalities: response.failedMunicipalities,
-        failedTargets: response.failedTargets,
-        durationMs: response.durationMs,
-      });
-    }
-
-    return {
-      status: 200,
-      body: response as unknown as Record<string, unknown>,
-    };
-  } catch (error) {
-    const appError = mapError(error);
-
-    console.error(`[${requestId}] cron_failed`, {
-      code: appError.code,
-      status: appError.status,
-      message: appError.message,
-    });
-
-    return {
-      status: appError.status,
-      body: {
-        requestId,
-        errorCode: appError.code,
-        message: appError.message,
-        durationMs: Date.now() - startedAt,
-      },
-    };
-  } finally {
-    if (redis && lockToken && lockAcquired) {
-      try {
-        await redis.releaseCronLock(lockToken);
-      } catch (releaseError) {
-        console.error(`[${requestId}] cron_lock_release_failed`, {
-          error:
-            releaseError instanceof Error
-              ? releaseError.message
-              : String(releaseError),
-        });
-      }
-    }
-  }
 }

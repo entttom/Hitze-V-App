@@ -1,0 +1,4 @@
+<resources>
+    <string name="notification_channel_name">Hitzewarnungen</string>
+    <string name="notification_channel_description">Benachrichtigungen bei Hitzewarnungen</string>
+</resources>
